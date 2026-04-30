@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Alpaca · Submission Coordinator</title>
+<title>Alpaca · Chief of Staff</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -24,7 +24,7 @@
 <div id="root"></div>
 <script type="text/babel">
 
-const { useState, useCallback } = React;
+const { useState, useCallback, useEffect } = React;
 
 // ── Color system ───────────────────────────────────────────────────────────
 const C = {
@@ -663,44 +663,593 @@ const PatternsView = ({scenario}) => {
   );
 };
 
-// ── View: Provider Reports ─────────────────────────────────────────────────
-const ReportsView = ({scenario}) => (
-  <div className="fade-in">
-    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
-      <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Provider reports</span>
-      <button style={{padding:'6px 12px',borderRadius:4,fontSize:11,fontWeight:500,background:C.teal,color:C.white,border:'none',cursor:'pointer'}}>Generate report</button>
-    </div>
-    <Card>
-      <div style={{padding:0}}>
-        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 2fr 1fr',padding:'8px 14px',
-          background:C.navy,borderBottom:`1px solid ${C.border}`}}>
-          {['Provider','Cases','First-pass','Most common flag','Trend'].map(h=>(
-            <span key={h} style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,0.6)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{h}</span>
+// ── Sparkline (simple SVG bar chart) ──────────────────────────────────────
+const Sparkline = ({values, color, height=32, width=120}) => {
+  const max = Math.max(...values);
+  const bw = width / values.length - 2;
+  return (
+    <svg width={width} height={height} style={{display:'block'}}>
+      {values.map((v,i) => {
+        const bh = max > 0 ? (v/max)*(height-4) : 2;
+        return <rect key={i} x={i*(bw+2)} y={height-bh} width={bw} height={bh} fill={color} rx={2} opacity={0.85}/>;
+      })}
+    </svg>
+  );
+};
+
+// ── Mini donut ────────────────────────────────────────────────────────────
+const MiniDonut = ({pct, color, size=48}) => {
+  const r = (size-8)/2; const circ = 2*Math.PI*r;
+  const fill = (pct/100)*circ;
+  return (
+    <svg width={size} height={size} style={{transform:'rotate(-90deg)'}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={C.border} strokeWidth={5}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={5}
+        strokeDasharray={`${fill} ${circ-fill}`} strokeLinecap="round"/>
+    </svg>
+  );
+};
+
+// ── Report: Monthly Operations ─────────────────────────────────────────────
+const MonthlyOpsReport = ({scenario}) => {
+  const ds = scenario.denialStats;
+  const fpr = Math.round((ds.approvals/ds.cases)*100);
+  const topFlag = scenario.denialBars[0];
+  const highlighted = scenario.providers.find(p=>p.highlight);
+
+  // Derive month context from scenario
+  const monthCtx = {
+    1: {month:'November 2024', trend:'First-pass rate holding at 81% network avg. TRICARE missing-assessment pattern elevated — 9 of 12 cases.', action:'BCBA coaching queue: Dr. Sarah Chen flagged for TRICARE PDDBI requirement. Review scheduled.'},
+    2: {month:'November 2024', trend:'Clean month for commercial submissions. Dr. Webb maintaining 91% first-pass rate. No systemic flags.', action:'No coaching interventions required. Monitor TRICARE queue for PDDBI pattern.'},
+    3: {month:'November 2024', trend:'Baseline data flag crossing threshold — 4 of 8 Dr. Nair submissions. Coaching escalation triggered.', action:'Coaching session scheduled: Dr. Priya Nair — baseline documentation protocol. Target: next 3 submissions.'},
+    4: {month:'October–November 2024', trend:'CO Medicaid ABA methodology denial confirmed. Override-to-denial case logged. Knowledge base updated.', action:'Rules update applied: ABA methodology language requirement elevated to high-confidence flag for CO Medicaid.'},
+    5: {month:'November 2024', trend:'New TRICARE rule identified from 6-denial pattern. Auto-escalated to rules update Oct 28. First application on record.', action:'All TRICARE submissions now checked against updated Vineland citation requirement. Monitor first-pass rate impact.'},
+  }[scenario.caseId ? Object.keys({1:1,2:2,3:3,4:4,5:5}).find(k => SCENARIOS[k].caseId === scenario.caseId) || 1 : 1];
+
+  const scenarioNum = Object.keys(SCENARIOS).find(k => SCENARIOS[k].caseId === scenario.caseId) || 1;
+  const ctx = {
+    1:{month:'November 2024',trend:'First-pass rate holding at 81% network avg. TRICARE missing-assessment pattern elevated.',action:'BCBA coaching queue: Dr. Sarah Chen flagged for TRICARE PDDBI requirement.'},
+    2:{month:'November 2024',trend:'Clean month for commercial submissions. Dr. Webb maintaining 91% first-pass rate. No systemic flags.',action:'No coaching interventions required this cycle.'},
+    3:{month:'November 2024',trend:'Baseline data flag crossing threshold across 4 Dr. Nair submissions. Coaching escalation triggered.',action:'Coaching session scheduled: Dr. Priya Nair — baseline documentation protocol.'},
+    4:{month:'October–November 2024',trend:'CO Medicaid ABA methodology denial confirmed after override. Knowledge base updated from outcome.',action:'ABA methodology flag elevated to high-confidence for CO Medicaid. Coordinator briefed.'},
+    5:{month:'November 2024',trend:'New TRICARE Vineland citation rule identified from 6-denial pattern. Auto-escalated Oct 28.',action:'All TRICARE submissions now checked against updated rule. First-pass impact tracking started.'},
+  }[scenarioNum];
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {/* Header */}
+      <div style={{background:C.navy,borderRadius:6,padding:'16px 20px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div>
+          <div style={{fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.4)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:4}}>Monthly operations report</div>
+          <div style={{fontSize:18,fontWeight:600,color:C.white}}>{ctx.month}</div>
+        </div>
+        <div style={{display:'flex',gap:24}}>
+          {[['Cases',ds.cases],['Approved',ds.approvals],['ADR',ds.adrs],['Denied',ds.denials]].map(([l,v])=>(
+            <div key={l} style={{textAlign:'center'}}>
+              <div style={{fontFamily:'monospace',fontSize:22,fontWeight:600,color:l==='Approved'?C.teal:l==='Denied'?'#F0997B':C.white}}>{v}</div>
+              <div style={{fontSize:9,color:'rgba(255,255,255,0.4)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{l}</div>
+            </div>
           ))}
         </div>
-        {scenario.providers.map((p,i)=>(
-          <div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 2fr 1fr',
-            padding:'11px 14px',borderBottom:i<scenario.providers.length-1?`1px solid ${C.border}`:'none',
-            background:p.highlight?C.tealL:i%2===0?C.white:C.grayL,
-            borderLeft:p.highlight?`3px solid ${C.teal}`:p.coaching?`3px solid ${C.amber}`:'3px solid transparent'}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <span style={{fontSize:12,fontWeight:500,color:C.text}}>{p.name}</span>
-              {p.coaching && <Badge label="coaching" fill={C.amberL} color={C.amber} border={C.amber}/>}
+      </div>
+
+      {/* KPI row */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+        <Card>
+          <div style={{padding:'14px',display:'flex',alignItems:'center',gap:14}}>
+            <MiniDonut pct={fpr} color={fpr>=80?C.teal:fpr>=65?C.amber:C.coral}/>
+            <div>
+              <div style={{fontSize:9,fontWeight:700,color:C.text2,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:3}}>First-pass rate</div>
+              <div style={{fontFamily:'monospace',fontSize:22,fontWeight:600,color:fpr>=80?C.teal:fpr>=65?C.amber:C.coral}}>{fpr}%</div>
+              <div style={{fontSize:10,color:C.text2}}>Network avg: 81%</div>
             </div>
-            <span style={{fontFamily:'monospace',fontSize:12,color:C.text2}}>{p.cases}</span>
-            <span style={{fontFamily:'monospace',fontSize:12,fontWeight:600,
-              color:parseFloat(p.rate)>=85?C.green:parseFloat(p.rate)>=70?C.amber:C.coral}}>{p.rate}</span>
-            <span style={{fontSize:11,color:C.text2}}>{p.flag}</span>
-            <span style={{fontSize:14,color:p.trend==='↑'?C.green:p.trend==='↓'?C.coral:C.text2}}>{p.trend}</span>
           </div>
+        </Card>
+        <Card>
+          <div style={{padding:'14px'}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.text2,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:8}}>Top denial category</div>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+              <Badge label={topFlag.cat} fill={topFlag.catBg} color={topFlag.catColor} border={topFlag.catColor}/>
+              <span style={{fontFamily:'monospace',fontSize:14,fontWeight:600,color:C.text}}>{topFlag.pct}%</span>
+            </div>
+            <div style={{fontSize:11,color:C.text2}}>{topFlag.label}</div>
+          </div>
+        </Card>
+        <Card>
+          <div style={{padding:'14px'}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.text2,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:8}}>Trend indicator</div>
+            <div style={{fontSize:12,color:C.text,lineHeight:1.5}}>{ctx.trend}</div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Denial breakdown */}
+      <Card>
+        <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>Denial breakdown — by category</span></CardHeader>
+        <div style={{padding:'12px 14px'}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:14}}>
+            {[
+              {label:'Clinical',count:scenario.denialBars.filter(b=>b.cat==='Clinical').length,color:C.red,bg:C.redL},
+              {label:'Admin',count:scenario.denialBars.filter(b=>b.cat==='Admin').length,color:C.amber,bg:C.amberL},
+              {label:'Payer rule',count:scenario.denialBars.filter(b=>b.cat==='Payer rule').length,color:C.purp,bg:C.purpL},
+            ].map(({label,count,color,bg})=>(
+              <div key={label} style={{background:bg,borderRadius:4,padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{fontSize:11,fontWeight:600,color}}>{label}</span>
+                <span style={{fontFamily:'monospace',fontSize:20,fontWeight:700,color}}>{count}</span>
+              </div>
+            ))}
+          </div>
+          {scenario.denialBars.map((b,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0',borderBottom:i<scenario.denialBars.length-1?`1px solid ${C.border}`:'none'}}>
+              <Badge label={b.cat} fill={b.catBg} color={b.catColor} border={b.catColor}/>
+              <span style={{flex:1,fontSize:11,color:C.text}}>{b.label}</span>
+              <div style={{width:120,height:6,background:C.border,borderRadius:20,overflow:'hidden'}}>
+                <div style={{width:`${b.pct}%`,height:'100%',background:b.catColor,borderRadius:20}}/>
+              </div>
+              <span style={{fontFamily:'monospace',fontSize:11,color:C.text2,width:32,textAlign:'right'}}>{b.pct}%</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Action items */}
+      <Card>
+        <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>Required actions this cycle</span></CardHeader>
+        <div style={{padding:'12px 14px'}}>
+          <div style={{padding:'10px 14px 10px 16px',background:C.tealL,borderLeft:`3px solid ${C.teal}`,borderRadius:'0 4px 4px 0',marginBottom:8}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.tealD,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:3}}>Ops action</div>
+            <div style={{fontSize:11,color:C.text}}>{ctx.action}</div>
+          </div>
+          <div style={{padding:'10px 14px 10px 16px',background:C.grayL,borderLeft:`3px solid ${C.border}`,borderRadius:'0 4px 4px 0'}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.text2,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:3}}>Next review</div>
+            <div style={{fontSize:11,color:C.text}}>Monthly case metrics review — first Monday of December. Quarterly policy review due Dec 15.</div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── Report: BCBA Performance ───────────────────────────────────────────────
+const BCBAReport = ({scenario}) => {
+  const highlighted = scenario.providers.find(p=>p.highlight) || scenario.providers[0];
+  const rate = parseFloat(highlighted.rate);
+
+  // Historical trend data per scenario (simulated monthly first-pass rates)
+  const scenarioNum = parseInt(Object.keys(SCENARIOS).find(k=>SCENARIOS[k].caseId===scenario.caseId)||'1');
+  const trendData = {
+    1: [68,65,70,72,68,71],
+    2: [88,90,89,91,92,91],
+    3: [75,70,68,65,62,62],
+    4: [72,70,68,65,70,68],
+    5: [76,78,80,79,80,80],
+  }[scenarioNum] || [70,72,71,73,72,71];
+
+  const flagHistory = {
+    1: ['Missing PDDBI','Missing PDDBI','Hours narrative','Missing PDDBI','Generalization plan','Missing PDDBI'],
+    2: ['None','None','None','None','None','None'],
+    3: ['Baseline data','None','Baseline data','None','Baseline data','Baseline data'],
+    4: ['ABA methodology','None','ABA methodology','ABA methodology','None','ABA methodology'],
+    5: ['Hours justification','None','Hours justification','None','None','Hours justification'],
+  }[scenarioNum] || [];
+
+  const months = ['Jun','Jul','Aug','Sep','Oct','Nov'];
+  const isImproving = trendData[trendData.length-1] > trendData[0];
+  const isFlat = Math.abs(trendData[trendData.length-1] - trendData[0]) <= 2;
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {/* Provider header */}
+      <div style={{background:C.navy,borderRadius:6,padding:'16px 20px',display:'flex',alignItems:'center',gap:20}}>
+        <div style={{width:44,height:44,borderRadius:'50%',background:C.teal,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <span style={{fontSize:16,fontWeight:700,color:C.white}}>{highlighted.name.split(' ').map(w=>w[0]).join('').slice(0,2)}</span>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.4)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:3}}>BCBA performance report</div>
+          <div style={{fontSize:16,fontWeight:600,color:C.white,marginBottom:2}}>{highlighted.name}</div>
+          <div style={{display:'flex',gap:8}}>
+            {highlighted.coaching && <Badge label="coaching flag active" fill="rgba(239,159,39,0.2)" color="#EF9F27" border="#EF9F27"/>}
+            <Badge label={`${highlighted.cases} cases this period`} fill="rgba(255,255,255,0.08)" color="rgba(255,255,255,0.5)" border="rgba(255,255,255,0.15)"/>
+          </div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontFamily:'monospace',fontSize:32,fontWeight:700,color:rate>=85?C.teal:rate>=70?'#EF9F27':'#F0997B',lineHeight:1}}>{highlighted.rate}</div>
+          <div style={{fontSize:10,color:'rgba(255,255,255,0.4)',marginTop:3}}>first-pass rate</div>
+          <div style={{fontSize:10,color:'rgba(255,255,255,0.3)'}}>vs 81% network avg</div>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+        {/* Trend chart */}
+        <Card>
+          <CardHeader>
+            <span style={{fontSize:12,fontWeight:600,color:C.text}}>First-pass rate — 6 month trend</span>
+            <Badge label={isFlat?'stable':isImproving?'improving':'declining'}
+              fill={isFlat?C.grayL:isImproving?C.greenL:C.redL}
+              color={isFlat?C.gray:isImproving?C.green:C.red}
+              border={isFlat?C.border:isImproving?C.green:C.red}/>
+          </CardHeader>
+          <div style={{padding:'14px'}}>
+            <div style={{display:'flex',alignItems:'flex-end',gap:4,height:80,marginBottom:6}}>
+              {trendData.map((v,i)=>{
+                const maxV=Math.max(...trendData);
+                const h=Math.round((v/maxV)*72);
+                const isLast=i===trendData.length-1;
+                return (
+                  <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2}}>
+                    <span style={{fontSize:9,fontFamily:'monospace',color:isLast?C.teal:C.text2}}>{v}%</span>
+                    <div style={{width:'100%',height:h,background:isLast?C.teal:C.border,borderRadius:'2px 2px 0 0',minHeight:4}}/>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:'flex',gap:4}}>
+              {months.map(m=><span key={m} style={{flex:1,fontSize:8.5,color:C.text2,textAlign:'center',fontFamily:'monospace'}}>{m}</span>)}
+            </div>
+          </div>
+        </Card>
+
+        {/* Flag history */}
+        <Card>
+          <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>Flag history — last 6 submissions</span></CardHeader>
+          <div style={{padding:'8px 14px'}}>
+            {months.map((m,i)=>(
+              <div key={m} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0',borderBottom:i<5?`1px solid ${C.border}`:'none'}}>
+                <span style={{fontFamily:'monospace',fontSize:10,color:C.text2,width:28}}>{m}</span>
+                <div style={{flex:1}}>
+                  {flagHistory[i]==='None'
+                    ? <span style={{fontSize:10,color:C.green}}>✓ No flags — passed first attempt</span>
+                    : <span style={{fontSize:10,color:C.amber}}>{flagHistory[i]}</span>
+                  }
+                </div>
+                <div style={{width:8,height:8,borderRadius:'50%',background:flagHistory[i]==='None'?C.green:C.amber}}/>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {/* Pattern analysis */}
+      <Card>
+        <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>Pattern analysis & recommended action</span></CardHeader>
+        <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:10}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+            {[
+              {label:'Most common flag', value:highlighted.flag, color:C.amber},
+              {label:'Failure type', value: highlighted.coaching?'Clinical — requires coaching':'Payer rule — information gap', color:highlighted.coaching?C.coral:C.purp},
+              {label:'Peer comparison', value:`${rate>=81?'Above':'Below'} network average`, color:rate>=81?C.green:C.amber},
+            ].map(({label,value,color})=>(
+              <div key={label} style={{background:C.grayL,borderRadius:4,padding:'10px 12px'}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.text2,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>{label}</div>
+                <div style={{fontSize:11,color,fontWeight:500}}>{value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{padding:'10px 14px 10px 16px',
+            background: highlighted.coaching?C.amberL:rate>=81?C.greenL:C.tealL,
+            borderLeft:`3px solid ${highlighted.coaching?C.amber:rate>=81?C.green:C.teal}`,
+            borderRadius:'0 4px 4px 0'}}>
+            <div style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',
+              color:highlighted.coaching?C.amberD:rate>=81?C.greenD:C.tealD,marginBottom:3}}>Recommended action</div>
+            <div style={{fontSize:11,color:C.text}}>
+              {highlighted.coaching
+                ? `Schedule targeted coaching on baseline documentation with ${highlighted.name.split(',')[0]}. Focus on documenting baseline performance levels for every treatment target before submission. Expected impact: 15–20pt improvement in first-pass rate over next 5 submissions.`
+                : rate>=81
+                ? `${highlighted.name.split(',')[0]} is performing above network average. No coaching intervention required. Continue monitoring for consistency.`
+                : `${highlighted.name.split(',')[0]} has a recurring payer-rule flag. Share the updated ${scenario.payer} documentation checklist directly. This is a knowledge gap, not a clinical quality issue — one targeted communication should resolve it.`
+              }
+            </div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── Report: Payer Intelligence ─────────────────────────────────────────────
+const PayerIntelReport = ({scenario}) => {
+  const scenarioNum = parseInt(Object.keys(SCENARIOS).find(k=>SCENARIOS[k].caseId===scenario.caseId)||'1');
+
+  const payerSummaries = {
+    1: [
+      {payer:'TRICARE West', cases:18, denials:5, rate:'72%', risk:'high', trend:'↑ denials', alert:'PDDBI missing pattern elevated — 9 of 12 recent denials. BCBA coaching queue active.', alertColor:C.coral},
+      {payer:'Blue Cross Commercial', cases:16, denials:1, rate:'94%', risk:'low', trend:'stable', alert:'No systemic issues. Clean submission history.', alertColor:C.green},
+      {payer:'Colorado Medicaid', cases:8, denials:2, rate:'75%', risk:'medium', trend:'stable', alert:'ABA methodology language remains a soft trigger. Monitor.', alertColor:C.amber},
+      {payer:'Aetna Commercial', cases:5, denials:0, rate:'100%', risk:'low', trend:'stable', alert:'No denial history this period.', alertColor:C.green},
+    ],
+    2: [
+      {payer:'Blue Cross Commercial', cases:16, denials:1, rate:'94%', risk:'low', trend:'stable', alert:'Performing above benchmark. No rule changes detected.', alertColor:C.green},
+      {payer:'TRICARE West', cases:18, denials:5, rate:'72%', risk:'high', trend:'↑ denials', alert:'PDDBI missing pattern continues. Not relevant to this case.', alertColor:C.amber},
+      {payer:'Colorado Medicaid', cases:8, denials:2, rate:'75%', risk:'medium', trend:'stable', alert:'No changes this period.', alertColor:C.amber},
+    ],
+    3: [
+      {payer:'Aetna Commercial', cases:12, denials:3, rate:'75%', risk:'medium', trend:'stable', alert:'Baseline data requirement being enforced more consistently. Pattern flagged.', alertColor:C.amber},
+      {payer:'TRICARE West', cases:18, denials:5, rate:'72%', risk:'high', trend:'↑ denials', alert:'PDDBI pattern active.', alertColor:C.coral},
+      {payer:'Blue Cross Commercial', cases:16, denials:1, rate:'94%', risk:'low', trend:'stable', alert:'Clean.', alertColor:C.green},
+    ],
+    4: [
+      {payer:'Colorado Medicaid', cases:11, denials:4, rate:'64%', risk:'high', trend:'↑ denials', alert:'ABA methodology denial confirmed. Rules updated from this case outcome. High enforcement detected.', alertColor:C.coral},
+      {payer:'TRICARE West', cases:18, denials:5, rate:'72%', risk:'high', trend:'↑ denials', alert:'PDDBI pattern active.', alertColor:C.coral},
+      {payer:'Blue Cross Commercial', cases:16, denials:1, rate:'94%', risk:'low', trend:'stable', alert:'Clean.', alertColor:C.green},
+    ],
+    5: [
+      {payer:'TRICARE West', cases:18, denials:6, rate:'67%', risk:'high', trend:'⚠ new rule', alert:'New rule auto-generated Oct 28: Vineland score must be cited in hours justification section. 6 denials confirmed this trigger. Rule applied to all future TRICARE submissions.', alertColor:C.purp, isNew:true},
+      {payer:'Blue Cross Commercial', cases:16, denials:1, rate:'94%', risk:'low', trend:'stable', alert:'No changes.', alertColor:C.green},
+      {payer:'Colorado Medicaid', cases:8, denials:2, rate:'75%', risk:'medium', trend:'stable', alert:'Monitor ABA methodology language.', alertColor:C.amber},
+    ],
+  }[scenarioNum] || [];
+
+  const riskColor = {high:C.coral, medium:C.amber, low:C.green};
+  const riskBg    = {high:C.coralL, medium:C.amberL, low:C.greenL};
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {/* Header */}
+      <div style={{background:C.navy,borderRadius:6,padding:'16px 20px'}}>
+        <div style={{fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.4)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:4}}>Payer intelligence report</div>
+        <div style={{fontSize:16,fontWeight:600,color:C.white,marginBottom:4}}>Active payer risk summary</div>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.5)'}}>Updated continuously from case outcomes · Rules database version current as of last quarterly review</div>
+      </div>
+
+      {/* Payer cards */}
+      {payerSummaries.map((p,i)=>(
+        <Card key={i}>
+          <div style={{padding:'14px 16px'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <span style={{fontSize:13,fontWeight:600,color:C.text}}>{p.payer}</span>
+                {p.isNew && <Badge label="New rule applied" fill={C.purpL} color={C.purp} border={C.purp}/>}
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontSize:11,color:C.text2}}>{p.trend}</span>
+                <Badge label={`${p.risk} risk`} fill={riskBg[p.risk]} color={riskColor[p.risk]} border={riskColor[p.risk]}/>
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:12}}>
+              {[['Cases this period',p.cases],['First-pass rate',p.rate],['Denials',p.denials]].map(([l,v])=>(
+                <div key={l} style={{background:C.grayL,borderRadius:4,padding:'8px 10px'}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.text2,textTransform:'uppercase',letterSpacing:'0.05em',marginBottom:2}}>{l}</div>
+                  <div style={{fontFamily:'monospace',fontSize:14,fontWeight:600,color:C.text}}>{v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:'8px 12px 8px 14px',background:p.alertColor+'18',
+              borderLeft:`3px solid ${p.alertColor}`,borderRadius:'0 4px 4px 0'}}>
+              <div style={{fontSize:11,color:C.text}}>{p.alert}</div>
+            </div>
+          </div>
+        </Card>
+      ))}
+
+      {/* Rule update log */}
+      <Card>
+        <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>Recent rules database updates</span></CardHeader>
+        <div style={{padding:'8px 14px'}}>
+          {[
+            {date:'Oct 28, 2024', payer:'TRICARE West', change:'Added: Vineland composite score must be explicitly cited in hours justification section', type:'New rule', typeColor:C.purp, typeBg:C.purpL},
+            {date:'Oct 15, 2024', payer:'TRICARE West', change:'Confidence increased: PDDBI requirement — 9/12 denial pattern confirmed', type:'Updated', typeColor:C.amber, typeBg:C.amberL},
+            {date:'Nov 1, 2024', payer:'Colorado Medicaid', change:'Confirmed from denial: ABA methodology language must name reinforcement strategies explicitly', type:'Confirmed', typeColor:C.coral, typeBg:C.coralL},
+            {date:'Sep 3, 2024', payer:'Blue Cross Commercial', change:'No changes — annual policy review, all existing rules validated', type:'Reviewed', typeColor:C.green, typeBg:C.greenL},
+          ].map((r,i)=>(
+            <div key={i} style={{display:'flex',gap:12,padding:'9px 0',borderBottom:i<3?`1px solid ${C.border}`:'none'}}>
+              <span style={{fontFamily:'monospace',fontSize:10,color:C.text2,whiteSpace:'nowrap',paddingTop:1}}>{r.date}</span>
+              <Badge label={r.type} fill={r.typeBg} color={r.typeColor} border={r.typeColor}/>
+              <div style={{flex:1}}>
+                <span style={{fontSize:10,fontWeight:600,color:C.text}}>{r.payer} — </span>
+                <span style={{fontSize:10,color:C.text2}}>{r.change}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── View: Reports hub ──────────────────────────────────────────────────────
+const ReportsView = ({scenario}) => {
+  const [activeReport, setActiveReport] = useState('monthly');
+  const tabs = [
+    {id:'monthly',  label:'Monthly operations'},
+    {id:'bcba',     label:'BCBA performance'},
+    {id:'payer',    label:'Payer intelligence'},
+  ];
+  return (
+    <div className="fade-in" style={{display:'flex',flexDirection:'column',gap:0}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Reports</span>
+        <button style={{padding:'5px 12px',borderRadius:4,fontSize:11,fontWeight:500,background:C.teal,color:C.white,border:'none',cursor:'pointer'}}>Export PDF</button>
+      </div>
+      {/* Tab row */}
+      <div style={{display:'flex',gap:0,borderBottom:`1px solid ${C.border}`,marginBottom:16}}>
+        {tabs.map(({id,label})=>(
+          <button key={id} onClick={()=>setActiveReport(id)} style={{
+            padding:'8px 18px',fontSize:11,fontWeight:500,cursor:'pointer',border:'none',background:'transparent',
+            color:activeReport===id?C.teal:C.text2,
+            borderBottom:activeReport===id?`2px solid ${C.teal}`:'2px solid transparent',
+            marginBottom:-1,transition:'all 0.1s'
+          }}>{label}</button>
         ))}
       </div>
-    </Card>
-  </div>
-);
+      {activeReport==='monthly' && <MonthlyOpsReport scenario={scenario}/>}
+      {activeReport==='bcba'    && <BCBAReport scenario={scenario}/>}
+      {activeReport==='payer'   && <PayerIntelReport scenario={scenario}/>}
+    </div>
+  );
+};
+
+// ── Intro page ─────────────────────────────────────────────────────────────
+const IntroPage = ({onEnter}) => {
+  const [activeGuide, setActiveGuide] = useState(null);
+
+  const views = [
+    {
+      id:'assessment', icon:'⬡', color:C.indigo, bg:C.indigoL,
+      title:'AI assessment',
+      what:'Runs two checks on every incoming draft before the coordinator reviews it.',
+      how:'Layer 1 catches missing documents. Layer 2 checks whether the documents that exist actually meet payer standards. Hard blocks stop submission. Soft flags surface to the coordinator with context.',
+      look:'Red block means nothing moves until it\'s resolved. Amber flag means the coordinator reviews and decides. Green means all clear.',
+    },
+    {
+      id:'feedback', icon:'◎', color:C.teal, bg:C.tealL,
+      title:'Feedback log',
+      what:'A chronological record of every event that touched a case — from first AI assessment to final outcome.',
+      how:'Every coordinator annotation, payer ADR, resubmission, and outcome is logged here with a timestamp and owner. The log is the tool\'s memory — it\'s also how it learns.',
+      look:'Purple dot = AI action. Teal dot = coordinator action. Gray dot = system or payer. Read top to bottom for the full case story.',
+    },
+    {
+      id:'payer', icon:'◈', color:C.purp, bg:C.purpL,
+      title:'Payer rules',
+      what:'The live knowledge base the AI checks every submission against.',
+      how:'Rules are tagged as REQUIRED, FLAG, or EXCLUDED. REQUIRED rules are hard stops. FLAG rules reduce approval probability. EXCLUDED rules trigger immediate denial. Rules update automatically when denial patterns cross a threshold.',
+      look:'Triggered rules are highlighted in red or amber — these are the specific rules that fired on the active case.',
+    },
+    {
+      id:'patterns', icon:'◲', color:C.amber, bg:C.amberL,
+      title:'Denial patterns',
+      what:'System-wide view of what\'s failing, how often, and for which payers and providers.',
+      how:'Every denial is categorized as clinical, admin, or payer rule. Bars show frequency. When a pattern crosses a threshold, the tool escalates it to a rules update or a coaching flag.',
+      look:'Highlighted bars are the patterns most relevant to the active scenario. Watch how they shift across scenarios.',
+    },
+    {
+      id:'reports', icon:'◭', color:C.green, bg:C.greenL,
+      title:'Reports',
+      what:'Three report types built for three different decisions: ops review, BCBA coaching, and payer risk management.',
+      how:'Monthly operations gives the cycle summary and required actions. BCBA performance shows individual provider trends and recommended interventions. Payer intelligence tracks risk by payer and surfaces rule changes.',
+      look:'Switch scenarios to see how each report responds to different case outcomes — especially S3 (pattern coaching) and S5 (new payer rule).',
+    },
+  ];
+
+  const scenarios = [
+    {n:1, label:'Hard block caught', desc:'The QA gate stops a TRICARE submission missing a required PDDBI. Shows the coordinator exactly what to send back and why.'},
+    {n:2, label:'Clean pass', desc:'A commercial submission with no flags. Shows the tool calibrating correctly — not flagging everything, accelerating the clean cases.'},
+    {n:3, label:'Pattern identified', desc:'The fourth baseline data flag from the same BCBA crosses the threshold. Coaching escalation fires automatically.'},
+    {n:4, label:'Denial routed', desc:'A coordinator override leads to a denial. The outcome feeds back into the knowledge base. The tool learns from the gap.'},
+    {n:5, label:'Payer rule update', desc:'A new TRICARE requirement detected from 6 denial patterns. Auto-escalated to the rules database before another submission fails.'},
+  ];
+
+  return (
+    <div className="fade-in" style={{
+      height:'100vh', background:`linear-gradient(135deg, #0A1628 0%, #1B2A4A 60%, #162236 100%)`,
+      overflowY:'auto', display:'flex', flexDirection:'column',
+    }}>
+      {/* Top bar */}
+      <div style={{padding:'18px 48px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.06)',flexShrink:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontFamily:'monospace',fontSize:15,color:C.white,fontWeight:600,letterSpacing:'-0.02em'}}>
+            alpaca<span style={{color:C.teal}}>.</span>coord
+          </span>
+          <span style={{width:1,height:16,background:'rgba(255,255,255,0.15)',display:'inline-block',margin:'0 4px'}}/>
+          <span style={{fontSize:12,color:'rgba(255,255,255,0.35)',letterSpacing:'0.02em'}}>chief of staff</span>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:7,height:7,borderRadius:'50%',background:C.teal}} className="pulse"/>
+          <span style={{fontSize:11,color:'rgba(255,255,255,0.4)',fontFamily:'monospace'}}>v1.0 · prototype</span>
+        </div>
+      </div>
+
+      {/* Hero */}
+      <div style={{padding:'64px 48px 48px',maxWidth:900}}>
+        <div style={{display:'inline-flex',alignItems:'center',gap:8,background:'rgba(29,158,117,0.12)',
+          border:'1px solid rgba(29,158,117,0.25)',borderRadius:20,padding:'5px 14px',marginBottom:24}}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:C.teal}}/>
+          <span style={{fontSize:11,color:C.teal,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase'}}>Submission coordinator · Chief of staff</span>
+        </div>
+        <h1 style={{fontSize:42,fontWeight:700,color:C.white,lineHeight:1.15,marginBottom:20,letterSpacing:'-0.02em'}}>
+          The coordinator makes<br/>every decision.<br/>
+          <span style={{color:C.teal}}>This tool makes them better.</span>
+        </h1>
+        <p style={{fontSize:15,color:'rgba(255,255,255,0.55)',lineHeight:1.7,maxWidth:680,marginBottom:36}}>
+          An AI-powered case intelligence layer for ABA prior authorization. It checks every draft before submission,
+          learns from every outcome, and surfaces patterns before they become denial trends — so the coordinator
+          spends their time on judgment, not searching for what went wrong.
+        </p>
+        <button onClick={onEnter} style={{
+          padding:'13px 32px',borderRadius:6,fontSize:14,fontWeight:600,cursor:'pointer',
+          background:C.teal,color:C.white,border:'none',letterSpacing:'0.02em',
+          boxShadow:`0 0 32px rgba(29,158,117,0.3)`,transition:'all 0.15s',
+        }}>
+          Enter dashboard →
+        </button>
+      </div>
+
+      {/* How it works — views guide */}
+      <div style={{padding:'0 48px 48px'}}>
+        <div style={{fontSize:11,fontWeight:700,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:20}}>What each view does</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10}}>
+          {views.map(v=>(
+            <div key={v.id} onClick={()=>setActiveGuide(activeGuide===v.id?null:v.id)}
+              style={{
+                background: activeGuide===v.id ? v.bg : 'rgba(255,255,255,0.04)',
+                border:`1px solid ${activeGuide===v.id ? v.color+'60' : 'rgba(255,255,255,0.08)'}`,
+                borderRadius:8,padding:'16px',cursor:'pointer',transition:'all 0.15s',
+              }}>
+              <div style={{fontSize:20,marginBottom:10,color:activeGuide===v.id?v.color:'rgba(255,255,255,0.4)'}}>{v.icon}</div>
+              <div style={{fontSize:12,fontWeight:600,color:activeGuide===v.id?v.color:C.white,marginBottom:4}}>{v.title}</div>
+              <div style={{fontSize:11,color:activeGuide===v.id?v.color+'cc':'rgba(255,255,255,0.35)',lineHeight:1.5}}>{v.what}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Expanded guide panel */}
+        {activeGuide && (() => {
+          const v = views.find(x=>x.id===activeGuide);
+          return (
+            <div className="fade-in" style={{
+              marginTop:12,background:v.bg,border:`1px solid ${v.color}40`,
+              borderRadius:8,padding:'20px 24px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:24,
+            }}>
+              <div>
+                <div style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em',color:v.color,marginBottom:8}}>How it works</div>
+                <div style={{fontSize:13,color:C.text,lineHeight:1.6}}>{v.how}</div>
+              </div>
+              <div>
+                <div style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em',color:v.color,marginBottom:8}}>What to look for</div>
+                <div style={{fontSize:13,color:C.text,lineHeight:1.6}}>{v.look}</div>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Scenario guide */}
+      <div style={{padding:'0 48px 64px'}}>
+        <div style={{fontSize:11,fontWeight:700,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'0.1em',marginBottom:20}}>The 5 test scenarios — what each one demonstrates</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {scenarios.map((s,i)=>(
+            <div key={s.n} style={{
+              display:'grid',gridTemplateColumns:'180px 1fr',gap:16,
+              background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',
+              borderRadius:6,padding:'14px 18px',alignItems:'start',
+            }}>
+              <div>
+                <div style={{fontFamily:'monospace',fontSize:10,color:'rgba(255,255,255,0.3)',marginBottom:4}}>S{s.n}</div>
+                <div style={{fontSize:12,fontWeight:600,color:C.white}}>{s.label}</div>
+              </div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',lineHeight:1.6}}>{s.desc}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{marginTop:24,padding:'16px 20px',background:'rgba(29,158,117,0.08)',
+          border:'1px solid rgba(29,158,117,0.2)',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:12,fontWeight:600,color:C.teal,marginBottom:3}}>Ready to explore</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>Switch between scenarios at the top of the dashboard. Every view updates to reflect the active case.</div>
+          </div>
+          <button onClick={onEnter} style={{
+            padding:'9px 22px',borderRadius:5,fontSize:12,fontWeight:600,cursor:'pointer',
+            background:C.teal,color:C.white,border:'none',flexShrink:0,marginLeft:24,
+          }}>Enter dashboard →</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ── Main App ───────────────────────────────────────────────────────────────
 const App = () => {
+  const [showIntro, setShowIntro] = useState(true);
   const [activeScenario, setActiveScenario] = useState(1);
   const [activeView, setActiveView] = useState('assessment');
   const [feedbackSent, setFeedbackSent] = useState(false);
@@ -713,12 +1262,14 @@ const App = () => {
     setFeedbackSent(false);
   }, []);
 
+  if (showIntro) return <IntroPage onEnter={() => setShowIntro(false)} />;
+
   const navItems = [
     {id:'assessment', label:'AI assessment'},
     {id:'feedback',   label:'Feedback log'},
     {id:'payer',      label:'Payer rules'},
     {id:'patterns',   label:'Denial patterns'},
-    {id:'reports',    label:'Provider reports'},
+    {id:'reports',    label:'Reports'},
   ];
 
   return (
@@ -726,7 +1277,14 @@ const App = () => {
 
       {/* Scenario bar */}
       <div style={{background:'#0A1628',borderBottom:'1px solid rgba(255,255,255,0.06)',padding:'7px 16px',display:'flex',alignItems:'center',gap:12,flexShrink:0,zIndex:10}}>
-        <span style={{fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.4)',whiteSpace:'nowrap'}}>Alpaca Health — Submission Coordinator</span>
+        <button onClick={()=>setShowIntro(true)} style={{
+          fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.4)',background:'none',border:'none',
+          cursor:'pointer',whiteSpace:'nowrap',padding:0,transition:'color 0.1s',
+        }} onMouseOver={e=>e.target.style.color='rgba(255,255,255,0.8)'}
+           onMouseOut={e=>e.target.style.color='rgba(255,255,255,0.4)'}>
+          ← guide
+        </button>
+        <div style={{width:1,height:14,background:'rgba(255,255,255,0.1)'}}/>
         <div style={{display:'flex',gap:6,flex:1,justifyContent:'center'}}>
           {[1,2,3,4,5].map(n=>(
             <button key={n} onClick={()=>switchScenario(n)} style={{
@@ -739,7 +1297,7 @@ const App = () => {
             </button>
           ))}
         </div>
-        <span style={{fontFamily:'monospace',fontSize:10,color:'rgba(255,255,255,0.3)',whiteSpace:'nowrap'}}>Test scenario {activeScenario} of 5</span>
+        <span style={{fontFamily:'monospace',fontSize:10,color:'rgba(255,255,255,0.3)',whiteSpace:'nowrap'}}>scenario {activeScenario} / 5</span>
       </div>
 
       {/* App shell */}
@@ -751,7 +1309,7 @@ const App = () => {
             alpaca<span style={{color:C.teal}}>.</span>coord
           </span>
           <div style={{width:1,height:18,background:'rgba(255,255,255,0.1)'}}/>
-          <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>Submission coordinator</span>
+          <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>chief of staff</span>
           <span style={{marginLeft:'auto',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{scenario.caseId}</span>
           <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:12}}>
             <div style={{width:7,height:7,borderRadius:'50%',background:scenario.statusColor}} className={scenario.statusColor===C.amber?'pulse':''}/>

@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alpaca · Submission Coordinator</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'IBM Plex Sans',system-ui,sans-serif;background:#0D1B2A;overflow:hidden}
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+  ::-webkit-scrollbar{width:4px;height:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2a3f5a;border-radius:2px}
+  .fade-in{animation:fadeIn 0.2s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+  .pulse{animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+const { useState, useCallback } = React;
+
+// ── Color system ───────────────────────────────────────────────────────────
+const C = {
+  navy:    '#1B2A4A', navy2: '#162236', navy3: '#0D1B2A',
+  teal:    '#1D9E75', tealL: '#E1F5EE', tealD: '#085041',
+  purp:    '#7F77DD', purpL: '#EEEDFE', purpD: '#26215C',
+  indigo:  '#3730A3', indigoL:'#EEF2FF', indigoD:'#1E1B6B',
+  gray:    '#5F5E5A', grayL: '#F4F4F2', grayD: '#2C2C2A',
+  green:   '#3B6D11', greenL:'#EAF3DE', greenD:'#173404',
+  amber:   '#854F0B', amberL:'#FAEEDA', amberD:'#412402',
+  coral:   '#993C1D', coralL:'#FAECE7', coralD:'#4A1B0C',
+  red:     '#A32D2D', redL:  '#FCEBEB',
+  govL:    '#F0EEFF', govD:  '#4C1D95',
+  border:  '#D3D1C7', surface:'#FAFAF8', white:'#FFFFFF', text:'#2C2C2A', text2:'#5F5E5A'
+};
+
+// ── Scenario data ──────────────────────────────────────────────────────────
+const SCENARIOS = {
+  1: {
+    name: 'Hard block caught', pill: 'S1 — Hard block caught',
+    caseId: 'ALP-2024-0847', provider: 'Dr. Sarah Chen, BCBA-D',
+    payer: 'TRICARE West', submitted: '2024-11-02',
+    cpt: '97153 · 97155 · 97156', hours: '25 hrs/week',
+    statusLabel: 'QA gate — hard block', statusColor: C.coral,
+    confidence: 87, comparableCases: 312,
+    learningBar: '312 TRICARE cases · 41 denials analyzed · Last rule update: Oct 15 2024 · This BCBA: 3 prior TRICARE submissions, pattern flagged',
+    layer1: [
+      { label: 'Treatment plan present and signed', status: 'ok' },
+      { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
+      { label: 'ADOS-2 diagnostic evaluation', status: 'ok' },
+      { label: 'TRICARE standardized assessment (PDDBI)', status: 'fail', note: 'PDDBI or approved equivalent required — not found. VB-MAPP alone does not satisfy TRICARE requirement.' },
+      { label: 'BCBA credential in correct location', status: 'ok' },
+      { label: 'Caregiver training documentation (97156)', status: 'ok' },
+    ],
+    layer2: [
+      { label: 'Goals with measurable mastery criteria', status: 'ok' },
+      { label: 'Baseline data for all targets', status: 'ok' },
+      { label: 'Hours narrative vs. Vineland SS:68', status: 'warn', note: 'Narrative should explicitly reference adaptive behavior deficit severity against requested hours.' },
+      { label: 'Functional hypothesis for behavior targets', status: 'ok' },
+      { label: 'Generalization plan with named settings', status: 'warn', note: 'Plan mentions generalization but does not name home, school, or community settings explicitly.' },
+      { label: 'ABA methodology explicit throughout', status: 'ok' },
+      { label: 'Non-covered interventions absent', status: 'ok' },
+    ],
+    hardBlock: 'PDDBI missing — seen in 9 of last 12 TRICARE submissions from this provider. Must be resolved before submission.',
+    softFlag: 'Hours narrative should explicitly reference Vineland SS:68 deficit. Generalization plan should name home, school, and community settings.',
+    feedbackSent: false,
+    feedbackLog: [
+      { id:1, dot:C.purp, label:'AI · auto', time:'Nov 02, 09:14', title:'Initial AI assessment complete', body:'Layer 1: 1 hard block (PDDBI missing). Layer 2: 2 soft flags. Confidence: 87%.' },
+      { id:2, dot:C.teal, label:'Coordinator · M. Torres', time:'Nov 02, 10:32', title:'Coordinator review — confirmed AI flags', body:'Confirmed hard block. Added note: Dr. Chen has submitted 3 TRICARE cases in past 6 months without PDDBI — pattern flagged for BCBA coaching.' },
+      { id:3, dot:C.gray, label:'System · auto', time:'Nov 02, 10:35', title:'Feedback sent to BCBA', body:'Hard block: add PDDBI. Soft flags: strengthen hours narrative, name generalization settings. Revision window: 5 business days.' },
+    ],
+    payerRules: {
+      payer: 'TRICARE West', updated: 'Oct 15, 2024',
+      rules: [
+        { cat:'REQUIRED', label:'PDDBI or approved equivalent standardized assessment', note:'Denial pattern: 9/12 TRICARE denials · triggered in this case', triggered: true },
+        { cat:'REQUIRED', label:'ASD diagnosis by MD, DO, or licensed psychologist (DSM-5)', note:'Source: TRICARE policy §4.2.1' },
+        { cat:'REQUIRED', label:'BCBA credential number in header (not footer)', note:'Denial pattern: 3/12 TRICARE denials' },
+        { cat:'FLAG',     label:'Generalization plan must name specific settings', note:'Soft trigger — appears in 6/9 ADR requests · triggered in this case', triggered: true },
+        { cat:'FLAG',     label:'Hours narrative must reference adaptive behavior scores explicitly', note:'Soft trigger · triggered in this case', triggered: true },
+        { cat:'EXCLUDED', label:'Restraint or restrictive procedures — any reference', note:'Immediate denial trigger · TRICARE policy §4.3.7' },
+      ]
+    },
+    denialStats: { cases:47, approvals:38, adrs:6, denials:3 },
+    denialBars: [
+      { label:'Missing standardized assessment', cat:'Clinical', pct:72, catColor:C.red, catBg:C.redL, highlighted: true },
+      { label:'Incomplete generalization plan', cat:'Admin', pct:46, catColor:C.amber, catBg:C.amberL },
+      { label:'Hours not justified against scores', cat:'Clinical', pct:38, catColor:C.red, catBg:C.redL },
+      { label:'Credential placement error', cat:'Admin', pct:18, catColor:C.amber, catBg:C.amberL },
+      { label:'Non-covered intervention', cat:'Payer rule', pct:12, catColor:C.purp, catBg:C.purpL },
+    ],
+    bcbaHighlight: { name:'Dr. Sarah Chen', rate:'71%', avg:'81%', flag:'Missing standardized assessment (TRICARE)', trend:'improving', highlight: true },
+    providers: [
+      { name:'Dr. Sarah Chen', cases:8, rate:'71%', flag:'Missing standardized assessment', trend:'↑', highlight:true },
+      { name:'Dr. Marcus Webb', cases:11, rate:'91%', flag:'None in last 6 months', trend:'→' },
+      { name:'Dr. Priya Nair', cases:6, rate:'62%', flag:'Missing baseline data', trend:'→' },
+      { name:'Dr. James Okafor', cases:9, rate:'68%', flag:'ABA methodology language', trend:'↓' },
+      { name:'Dr. Anita Rodriguez', cases:4, rate:'80%', flag:'Hours justification', trend:'↑' },
+    ]
+  },
+
+  2: {
+    name: 'Clean pass', pill: 'S2 — Clean pass',
+    caseId: 'ALP-2024-0851', provider: 'Dr. Marcus Webb, BCBA',
+    payer: 'Blue Cross Commercial', submitted: '2024-11-04',
+    cpt: '97153 · 97155', hours: '20 hrs/week',
+    statusLabel: 'All checks passed — ready', statusColor: C.teal,
+    confidence: 94, comparableCases: 208,
+    learningBar: '208 commercial cases · 12 denials · Last rule update: Sep 3 2024 · This BCBA: 11 prior submissions, 91% first-pass rate',
+    layer1: [
+      { label: 'Treatment plan present and signed', status: 'ok' },
+      { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
+      { label: 'ADOS-2 diagnostic evaluation', status: 'ok' },
+      { label: 'Standardized behavioral assessment', status: 'ok' },
+      { label: 'BCBA credential in correct location', status: 'ok' },
+      { label: 'Caregiver training documentation', status: 'ok' },
+    ],
+    layer2: [
+      { label: 'Goals with measurable mastery criteria', status: 'ok' },
+      { label: 'Baseline data for all targets', status: 'ok' },
+      { label: 'Hours narrative vs. Vineland SS:74', status: 'ok' },
+      { label: 'Functional hypothesis for behavior targets', status: 'ok' },
+      { label: 'Generalization plan — home, school, community named', status: 'ok' },
+      { label: 'ABA methodology explicit throughout', status: 'ok' },
+      { label: 'Non-covered interventions absent', status: 'ok' },
+    ],
+    hardBlock: null,
+    softFlag: null,
+    allClear: true,
+    feedbackLog: [
+      { id:1, dot:C.purp, label:'AI · auto', time:'Nov 04, 08:22', title:'Initial AI assessment complete', body:'Layer 1: all 6 checks passed. Layer 2: all 7 checks passed. No hard blocks, no soft flags. Confidence: 94%.' },
+      { id:2, dot:C.teal, label:'System · ready', time:'Nov 04, 08:22', title:'Case ready for coordinator review', body:'All checks passed. Awaiting coordinator confirmation before submission.' },
+    ],
+    payerRules: {
+      payer: 'Blue Cross Commercial', updated: 'Sep 3, 2024',
+      rules: [
+        { cat:'REQUIRED', label:'ASD diagnosis with DSM-5 criteria', note:'Standard commercial requirement', ok: true },
+        { cat:'REQUIRED', label:'BCBA credential documentation', note:'Standard commercial requirement', ok: true },
+        { cat:'REQUIRED', label:'Adaptive behavior assessment (Vineland or equivalent)', note:'Standard commercial requirement', ok: true },
+        { cat:'FLAG',     label:'Hours narrative should reference assessment scores', note:'Soft best practice', ok: true },
+        { cat:'FLAG',     label:'Generalization plan recommended', note:'Soft best practice', ok: true },
+      ]
+    },
+    denialStats: { cases:11, approvals:10, adrs:1, denials:0 },
+    denialBars: [
+      { label:'Missing standardized assessment', cat:'Clinical', pct:8, catColor:C.red, catBg:C.redL },
+      { label:'Incomplete generalization plan', cat:'Admin', pct:5, catColor:C.amber, catBg:C.amberL },
+    ],
+    bcbaHighlight: { name:'Dr. Marcus Webb', rate:'91%', avg:'81%', flag:'None in last 6 months', trend:'high performer', highlight: false },
+    providers: [
+      { name:'Dr. Marcus Webb', cases:11, rate:'91%', flag:'None in last 6 months', trend:'→', highlight:true },
+      { name:'Dr. Sarah Chen', cases:8, rate:'71%', flag:'Missing standardized assessment', trend:'↑' },
+      { name:'Dr. Priya Nair', cases:6, rate:'62%', flag:'Missing baseline data', trend:'→' },
+      { name:'Dr. James Okafor', cases:9, rate:'68%', flag:'ABA methodology language', trend:'↓' },
+      { name:'Dr. Anita Rodriguez', cases:4, rate:'80%', flag:'Hours justification', trend:'↑' },
+    ]
+  },
+
+  3: {
+    name: 'Pattern identified', pill: 'S3 — Pattern identified',
+    caseId: 'ALP-2024-0858', provider: 'Dr. Priya Nair, BCBA',
+    payer: 'Aetna Commercial', submitted: '2024-11-06',
+    cpt: '97153 · 97155 · 97156', hours: '22 hrs/week',
+    statusLabel: 'Soft flag — coaching alert generated', statusColor: C.amber,
+    confidence: 79, comparableCases: 144,
+    learningBar: 'This BCBA: 8 submissions, 62% first-pass rate · Recurring flag on baseline data across 4 cases · Coaching flag generated',
+    layer1: [
+      { label: 'Treatment plan present and signed', status: 'ok' },
+      { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
+      { label: 'ADOS-2 diagnostic evaluation', status: 'ok' },
+      { label: 'Standardized behavioral assessment', status: 'ok' },
+      { label: 'BCBA credential in correct location', status: 'ok' },
+      { label: 'Caregiver training documentation', status: 'ok' },
+    ],
+    layer2: [
+      { label: 'Goals with measurable mastery criteria', status: 'ok' },
+      { label: 'Baseline data — target T1', status: 'ok' },
+      { label: 'Baseline data — target T2', status: 'warn', note: 'Baseline missing for T2. This is the 4th submission from this provider with this issue across different cases.' },
+      { label: 'Baseline data — target T4', status: 'warn', note: 'Baseline missing for T4. Pattern threshold crossed — coaching flag sent to ops lead.' },
+      { label: 'Functional hypothesis for behavior targets', status: 'ok' },
+      { label: 'Generalization plan with named settings', status: 'ok' },
+      { label: 'ABA methodology explicit throughout', status: 'ok' },
+    ],
+    hardBlock: null,
+    softFlag: 'Baseline data missing for targets T2 and T4 — this is the 4th submission from this provider with this issue. Coordinator coaching recommended.',
+    patternAlert: true,
+    feedbackLog: [
+      { id:1, dot:C.purp, label:'AI · auto', time:'Nov 06, 10:15', title:'AI assessment — submission 3 (case ALP-2024-0831)', body:'Soft flag: baseline data missing for target T3. Coordinator noted and sent feedback.' },
+      { id:2, dot:C.purp, label:'AI · auto', time:'Nov 06, 11:42', title:'AI assessment — submission 5 (case ALP-2024-0839)', body:'Soft flag: baseline data missing for target T1. Same pattern noted.' },
+      { id:3, dot:C.purp, label:'AI · auto', time:'Nov 06, 14:08', title:'AI assessment — submission 6 (case ALP-2024-0843)', body:'Soft flag: baseline data missing for targets T2 and T3. Pattern recurring.' },
+      { id:4, dot:C.purp, label:'AI · auto', time:'Nov 06, 09:51', title:'AI assessment — submission 8 (this case)', body:'Soft flag: baseline data missing for targets T2 and T4. Pattern threshold crossed.' },
+      { id:5, dot:C.coral, label:'System · auto', time:'Nov 06, 09:52', title:'Pattern threshold crossed — coaching flag escalated', body:'Baseline data missing in 4 of 8 submissions from Dr. Nair. Coaching flag sent to ops lead. BCBA notified.' },
+    ],
+    payerRules: {
+      payer: 'Aetna Commercial', updated: 'Oct 1, 2024',
+      rules: [
+        { cat:'REQUIRED', label:'Baseline data documented for all treatment targets', note:'Triggered in this case — 4th occurrence from this provider', triggered: true },
+        { cat:'REQUIRED', label:'ASD diagnosis with DSM-5 criteria', note:'Standard requirement' },
+        { cat:'REQUIRED', label:'Goals with objective mastery criteria', note:'Standard requirement' },
+        { cat:'FLAG',     label:'Hours narrative should reference assessment scores', note:'Best practice' },
+      ]
+    },
+    denialStats: { cases:47, approvals:38, adrs:6, denials:3 },
+    denialBars: [
+      { label:'Missing baseline data', cat:'Clinical', pct:38, catColor:C.red, catBg:C.redL, highlighted: true, note:'Recurring — Dr. Nair (4 cases)' },
+      { label:'Missing standardized assessment', cat:'Clinical', pct:28, catColor:C.red, catBg:C.redL },
+      { label:'Incomplete generalization plan', cat:'Admin', pct:22, catColor:C.amber, catBg:C.amberL },
+      { label:'Hours not justified', cat:'Clinical', pct:18, catColor:C.red, catBg:C.redL },
+    ],
+    bchaHighlight: null,
+    providers: [
+      { name:'Dr. Priya Nair', cases:8, rate:'62%', flag:'Missing baseline data (4 cases)', trend:'→', highlight:true, coaching: true },
+      { name:'Dr. Sarah Chen', cases:8, rate:'71%', flag:'Missing standardized assessment', trend:'↑' },
+      { name:'Dr. Marcus Webb', cases:11, rate:'91%', flag:'None in last 6 months', trend:'→' },
+      { name:'Dr. James Okafor', cases:9, rate:'68%', flag:'ABA methodology language', trend:'↓' },
+      { name:'Dr. Anita Rodriguez', cases:4, rate:'80%', flag:'Hours justification', trend:'↑' },
+    ]
+  },
+
+  4: {
+    name: 'Denial routed', pill: 'S4 — Denial routed',
+    caseId: 'ALP-2024-0829', provider: 'Dr. James Okafor, BCBA',
+    payer: 'Colorado Medicaid', submitted: '2024-10-18',
+    cpt: '97153 · 97155', hours: '18 hrs/week',
+    statusLabel: 'Case closed — final denial', statusColor: C.coral,
+    confidence: 71, comparableCases: 89,
+    learningBar: 'Denial categorized: Clinical — ABA methodology · Knowledge base updated · Colorado Medicaid ABA methodology rule confidence increased',
+    layer1: [
+      { label: 'Treatment plan present and signed', status: 'ok' },
+      { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
+      { label: 'ADOS-2 diagnostic evaluation', status: 'ok' },
+      { label: 'Standardized behavioral assessment', status: 'ok' },
+      { label: 'BCBA credential in correct location', status: 'ok' },
+    ],
+    layer2: [
+      { label: 'Goals with measurable mastery criteria', status: 'ok' },
+      { label: 'Baseline data for all targets', status: 'ok' },
+      { label: 'ABA methodology explicit throughout', status: 'warn', note: 'Intervention language borrows from OT framework. Reinforcement strategies and prompting hierarchies not explicitly named. Flagged before submission — coordinator overrode.' },
+      { label: 'Functional hypothesis for behavior targets', status: 'ok' },
+      { label: 'Generalization plan with named settings', status: 'ok' },
+      { label: 'Non-covered interventions absent', status: 'ok' },
+    ],
+    hardBlock: null,
+    softFlag: null,
+    denialBanner: 'Payer denial received — final denial after peer-to-peer. Case routed for close-out.',
+    overrideBanner: 'The ABA methodology flag was overridden at submission. Denial reason matches flagged content. Knowledge base updated.',
+    feedbackLog: [
+      { id:1, dot:C.purp, label:'AI · auto', time:'Oct 18, 09:30', title:'Initial AI assessment', body:'Layer 2 soft flag: ABA methodology language borrows from OT framework. Reinforcement strategies not named. Confidence: 71%.' },
+      { id:2, dot:C.teal, label:'Coordinator · R. Patel', time:'Oct 18, 10:14', title:'Coordinator override', body:'Flag overridden. Note: "Plan language is sufficient for this case. Submitting."' },
+      { id:3, dot:C.gray, label:'System · auto', time:'Oct 18, 10:15', title:'Submitted to Colorado Medicaid', body:'Override logged. Submitted.' },
+      { id:4, dot:C.gray, label:'Payer · CO Medicaid', time:'Oct 25, 14:02', title:'ADR received', body:'Payer requests clarification on ABA methodology. Specific reinforcement strategies and data collection systems must be named.' },
+      { id:5, dot:C.teal, label:'Coordinator · R. Patel', time:'Oct 28, 09:18', title:'BCBA revised and resubmitted', body:'Dr. Okafor updated intervention language. Resubmitted.' },
+      { id:6, dot:C.coral, label:'Payer · CO Medicaid', time:'Nov 01, 11:45', title:'Denial — plan does not demonstrate ABA methodology', body:'Payer held denial. Treatment plan does not demonstrate ABA methodology per CO Medicaid policy.' },
+      { id:7, dot:C.coral, label:'System · auto', time:'Nov 01, 15:22', title:'Case closed — final denial', body:'Case summary sent to Dr. Okafor. Denial categorized: Clinical — ABA methodology. Knowledge base updated. External appeals flagged as BCBA-led.' },
+    ],
+    payerRules: {
+      payer: 'Colorado Medicaid', updated: 'Nov 1, 2024 (updated from denial)',
+      rules: [
+        { cat:'REQUIRED', label:'ABA methodology explicit — reinforcement strategies, prompting hierarchies, data systems must be named', note:'Denial logged against this rule · confidence updated · triggered in this case', triggered: true },
+        { cat:'EXCLUDED', label:'Sensory-based interventions without behavioral rationale', note:'Weighted blankets, brushing protocols not reimbursable under ABA' },
+        { cat:'REQUIRED', label:'ASD diagnosis with qualifying provider', note:'Standard requirement' },
+        { cat:'FLAG',     label:'OT or speech framework language without ABA anchoring', note:'Known soft trigger — confirmed as denial cause in this case', triggered: true },
+      ]
+    },
+    denialStats: { cases:47, approvals:36, adrs:7, denials:4 },
+    denialBars: [
+      { label:'ABA methodology not demonstrated', cat:'Clinical', pct:44, catColor:C.red, catBg:C.redL, highlighted: true, note:'CO Medicaid · updated from this case' },
+      { label:'Missing standardized assessment', cat:'Clinical', pct:32, catColor:C.red, catBg:C.redL },
+      { label:'Sensory interventions referenced', cat:'Payer rule', pct:22, catColor:C.purp, catBg:C.purpL },
+      { label:'Incomplete generalization plan', cat:'Admin', pct:18, catColor:C.amber, catBg:C.amberL },
+    ],
+    providers: [
+      { name:'Dr. James Okafor', cases:9, rate:'68%', flag:'ABA methodology language (CO Medicaid)', trend:'↓', highlight:true },
+      { name:'Dr. Sarah Chen', cases:8, rate:'71%', flag:'Missing standardized assessment', trend:'↑' },
+      { name:'Dr. Marcus Webb', cases:11, rate:'91%', flag:'None in last 6 months', trend:'→' },
+      { name:'Dr. Priya Nair', cases:8, rate:'62%', flag:'Missing baseline data', trend:'→' },
+      { name:'Dr. Anita Rodriguez', cases:4, rate:'80%', flag:'Hours justification', trend:'↑' },
+    ]
+  },
+
+  5: {
+    name: 'Payer rule update', pill: 'S5 — Payer rule update',
+    caseId: 'ALP-2024-0862', provider: 'Dr. Anita Rodriguez, BCBA',
+    payer: 'TRICARE West', submitted: '2024-11-08',
+    cpt: '97153 · 97155 · 97156', hours: '28 hrs/week',
+    statusLabel: 'New rule triggered — first case', statusColor: C.purp,
+    confidence: 82, comparableCases: 312,
+    learningBar: 'New rule added Oct 28 2024 — identified from 6 TRICARE denials · This is the first case assessed under the updated rule',
+    layer1: [
+      { label: 'Treatment plan present and signed', status: 'ok' },
+      { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
+      { label: 'ADOS-2 diagnostic evaluation', status: 'ok' },
+      { label: 'PDDBI — present', status: 'ok' },
+      { label: 'Vineland-3 (SS:77) — present', status: 'ok' },
+      { label: 'BCBA credential in correct location', status: 'ok' },
+    ],
+    layer2: [
+      { label: 'Goals with measurable mastery criteria', status: 'ok' },
+      { label: 'Baseline data for all targets', status: 'ok' },
+      { label: 'Vineland SS:77 cited in hours justification section', status: 'warn', note: 'NEW RULE (Oct 28): TRICARE now requires Vineland composite score to be explicitly stated in the hours justification section — not just attached as an assessment. SS:77 is below the 80 threshold. Found in assessment, not in justification narrative.', isNew: true },
+      { label: 'Functional hypothesis for behavior targets', status: 'ok' },
+      { label: 'Generalization plan — home, school, community named', status: 'ok' },
+      { label: 'ABA methodology explicit throughout', status: 'ok' },
+      { label: 'Non-covered interventions absent', status: 'ok' },
+    ],
+    hardBlock: null,
+    softFlag: 'Vineland SS:77 is below TRICARE\'s threshold. New rule (Oct 28 2024): the composite score must be explicitly stated in the hours justification section — not just present in the attached assessment. Add one sentence: "Vineland-3 composite score of 77 indicates significant adaptive behavior deficits supporting the requested 28 hours per week."',
+    newRule: true,
+    feedbackLog: [
+      { id:1, dot:C.coral, label:'System · auto', time:'Oct 28, 16:00', title:'Payer pattern threshold crossed — new rule generated', body:'6 TRICARE denials in 14 days share common cause: Vineland score present in assessment but not cited in hours justification section. New rule added to TRICARE ruleset.' },
+      { id:2, dot:C.purp, label:'AI · auto', time:'Nov 08, 11:04', title:'AI assessment — first case under new rule', body:'New rule triggered: Vineland SS:77 not cited in hours justification section. Rule applied from Oct 28 update. Confidence: 82%.' },
+    ],
+    payerRules: {
+      payer: 'TRICARE West', updated: 'Oct 28, 2024 (auto-updated from denial pattern)',
+      rules: [
+        { cat:'REQUIRED', label:'Vineland composite score explicitly stated in hours justification section (not just assessment attachment)', note:'NEW — Oct 28 2024 · identified from 6 denial patterns · triggered in this case', triggered: true, isNew: true },
+        { cat:'REQUIRED', label:'PDDBI or approved equivalent standardized assessment', note:'Denial pattern: 9/12 TRICARE denials' },
+        { cat:'REQUIRED', label:'ASD diagnosis by MD, DO, or licensed psychologist', note:'TRICARE policy §4.2.1' },
+        { cat:'REQUIRED', label:'BCBA credential number in header', note:'Denial pattern: 3/12 TRICARE denials' },
+        { cat:'FLAG',     label:'Generalization plan must name specific settings', note:'Soft trigger' },
+        { cat:'EXCLUDED', label:'Restraint or restrictive procedures', note:'Immediate denial trigger' },
+      ]
+    },
+    denialStats: { cases:47, approvals:35, adrs:6, denials:6 },
+    denialBars: [
+      { label:'Vineland score not cited in justification', cat:'Payer rule', pct:100, catColor:C.purp, catBg:C.purpL, highlighted: true, note:'Emerging — 6 cases · rule updated Oct 28' },
+      { label:'Missing standardized assessment', cat:'Clinical', pct:72, catColor:C.red, catBg:C.redL },
+      { label:'Incomplete generalization plan', cat:'Admin', pct:46, catColor:C.amber, catBg:C.amberL },
+      { label:'Hours not justified against scores', cat:'Clinical', pct:38, catColor:C.red, catBg:C.redL },
+    ],
+    providers: [
+      { name:'Dr. Anita Rodriguez', cases:4, rate:'80%', flag:'Hours justification (first new rule case)', trend:'↑', highlight:true },
+      { name:'Dr. Sarah Chen', cases:8, rate:'71%', flag:'Missing standardized assessment', trend:'↑' },
+      { name:'Dr. Marcus Webb', cases:11, rate:'91%', flag:'None in last 6 months', trend:'→' },
+      { name:'Dr. Priya Nair', cases:8, rate:'62%', flag:'Missing baseline data', trend:'→' },
+      { name:'Dr. James Okafor', cases:9, rate:'68%', flag:'ABA methodology language', trend:'↓' },
+    ]
+  }
+};
+
+// ── Reusable components ────────────────────────────────────────────────────
+
+const Badge = ({label, fill, color, border}) => (
+  <span style={{display:'inline-flex',alignItems:'center',padding:'2px 8px',borderRadius:20,
+    fontSize:10,fontWeight:700,background:fill,color,border:`1px solid ${border||fill}`,
+    letterSpacing:'0.04em',whiteSpace:'nowrap'}}>
+    {label}
+  </span>
+);
+
+const OwnerBadge = ({label}) => {
+  const map = {
+    'BCBA':{fill:C.tealL,color:C.tealD,border:C.teal},
+    'Coordinator':{fill:C.purpL,color:C.purpD,border:C.purp},
+    'AI tool':{fill:C.indigoL,color:C.indigoD,border:C.indigo},
+    'Payer':{fill:C.grayL,color:C.grayD,border:C.gray},
+    'AI · auto':{fill:C.indigoL,color:C.indigoD,border:C.indigo},
+    'System · auto':{fill:C.grayL,color:C.grayD,border:C.gray},
+    'System · ready':{fill:C.greenL,color:C.greenD,border:C.green},
+    'Payer · CO Medicaid':{fill:C.grayL,color:C.grayD,border:C.gray},
+    'Payer · TRICARE':{fill:C.grayL,color:C.grayD,border:C.gray},
+    'Coordinator · M. Torres':{fill:C.purpL,color:C.purpD,border:C.purp},
+    'Coordinator · R. Patel':{fill:C.purpL,color:C.purpD,border:C.purp},
+  };
+  const s = map[label] || {fill:C.grayL,color:C.grayD,border:C.gray};
+  return <Badge label={label} fill={s.fill} color={s.color} border={s.border}/>;
+};
+
+const CheckIcon = ({status}) => {
+  const map = {
+    ok:   {bg:C.greenL, color:C.green, symbol:'✓'},
+    fail: {bg:C.redL,   color:C.red,   symbol:'✗'},
+    warn: {bg:C.amberL, color:C.amber, symbol:'!'},
+  };
+  const s = map[status];
+  return (
+    <div style={{width:16,height:16,borderRadius:'50%',background:s.bg,
+      display:'flex',alignItems:'center',justifyContent:'center',
+      flexShrink:0,fontSize:9,fontWeight:800,color:s.color,marginTop:2}}>
+      {s.symbol}
+    </div>
+  );
+};
+
+const Card = ({children, style={}}) => (
+  <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:6,overflow:'hidden',...style}}>
+    {children}
+  </div>
+);
+
+const CardHeader = ({children, style={}}) => (
+  <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.border}`,
+    display:'flex',alignItems:'center',gap:8,...style}}>
+    {children}
+  </div>
+);
+
+// ── View: AI Assessment ────────────────────────────────────────────────────
+const AssessmentView = ({scenario, onFeedbackSent, feedbackSent}) => {
+  const s = scenario;
+  return (
+    <div className="fade-in" style={{display:'flex',flexDirection:'column',gap:14}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Case record + AI assessment</span>
+        <Badge label={s.statusLabel} fill={s.statusColor+'22'} color={s.statusColor} border={s.statusColor}/>
+      </div>
+
+      {/* Denial banner */}
+      {s.denialBanner && (
+        <div style={{padding:'10px 14px',background:C.coralL,borderLeft:`3px solid ${C.coral}`,borderRadius:'0 4px 4px 0'}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.coralD,marginBottom:3}}>{s.denialBanner}</div>
+          {s.overrideBanner && <div style={{fontSize:11,color:C.coralD,opacity:0.8}}>{s.overrideBanner}</div>}
+        </div>
+      )}
+
+      {/* All clear */}
+      {s.allClear && (
+        <div style={{padding:'10px 14px',background:C.greenL,borderLeft:`3px solid ${C.green}`,borderRadius:'0 4px 4px 0'}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.greenD}}>All checks passed — ready for coordinator review and submission</div>
+        </div>
+      )}
+
+      {/* Case metadata */}
+      <Card>
+        <CardHeader>
+          <span style={{fontSize:12,fontWeight:600,color:C.text}}>Case metadata</span>
+          <span style={{marginLeft:'auto',fontFamily:'monospace',fontSize:10,color:C.text2,background:C.grayL,padding:'2px 8px',borderRadius:3}}>{s.caseId}</span>
+        </CardHeader>
+        <div style={{padding:'12px 14px'}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
+            {[['Provider / BCBA', s.provider],['Payer', s.payer],['Submission date', s.submitted],
+              ['CPT codes', s.cpt],['Hours / week', s.hours],['Auth window','180 days from approval']
+            ].map(([k,v]) => (
+              <div key={k} style={{background:C.grayL,borderRadius:4,padding:'8px 10px'}}>
+                <div style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',color:C.text2,marginBottom:2}}>{k}</div>
+                <div style={{fontSize:11,fontWeight:500,color:C.text,fontFamily:k==='CPT codes'||k==='Submission date'?'monospace':'inherit'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* Two layers */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        {[{title:'Layer 1 — components', items:s.layer1, count:s.layer1.filter(x=>x.status!=='ok').length},
+          {title:'Layer 2 — contents', items:s.layer2, count:s.layer2.filter(x=>x.status!=='ok').length}
+        ].map(({title,items,count}) => (
+          <Card key={title}>
+            <div style={{padding:'7px 12px',display:'flex',alignItems:'center',justifyContent:'space-between',
+              background: count>0 ? C.amberL : C.greenL,
+              borderBottom:`1px solid ${count>0?C.amber:C.green}`}}>
+              <span style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',color:count>0?C.amber:C.green}}>{title}</span>
+              {count>0 && <Badge label={`${count} flag${count>1?'s':''}`} fill={C.amberL} color={C.amber} border={C.amber}/>}
+              {count===0 && <Badge label="all clear" fill={C.greenL} color={C.green} border={C.green}/>}
+            </div>
+            <div style={{padding:'8px 12px'}}>
+              {items.map((item,i) => (
+                <div key={i} style={{display:'flex',gap:8,padding:'5px 0',borderBottom:i<items.length-1?`1px solid ${C.border}`:'none'}}>
+                  <CheckIcon status={item.status}/>
+                  <div style={{flex:1}}>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{fontSize:10.5,color:C.text}}>{item.label}</span>
+                      {item.isNew && <Badge label="New rule" fill={C.purpL} color={C.purp} border={C.purp}/>}
+                    </div>
+                    {item.note && <div style={{fontSize:9.5,color:C.text2,marginTop:2,lineHeight:1.4}}>{item.note}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Recommendation */}
+      <Card>
+        <CardHeader>
+          <span style={{fontSize:12,fontWeight:600,color:C.text}}>AI recommendation</span>
+          <span style={{marginLeft:'auto',fontSize:10,color:C.text2}}>{s.confidence}% approval probability</span>
+        </CardHeader>
+        <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:8}}>
+          {s.hardBlock && (
+            <div style={{padding:'9px 12px 9px 14px',background:C.redL,borderLeft:`3px solid ${C.red}`,borderRadius:'0 4px 4px 0'}}>
+              <div style={{fontSize:10.5,fontWeight:700,color:'#791F1F',marginBottom:2}}>Hard block — return to BCBA</div>
+              <div style={{fontSize:10.5,color:C.text}}>{s.hardBlock}</div>
+            </div>
+          )}
+          {s.softFlag && (
+            <div style={{padding:'9px 12px 9px 14px',background:C.amberL,borderLeft:`3px solid ${C.amber}`,borderRadius:'0 4px 4px 0'}}>
+              <div style={{fontSize:10.5,fontWeight:700,color:C.amberD,marginBottom:2}}>
+                {s.hardBlock ? 'Soft flags — coordinator review' : s.patternAlert ? 'Pattern alert — coordinator review' : s.newRule ? 'New rule triggered — coordinator review' : 'Soft flag — coordinator review'}
+              </div>
+              <div style={{fontSize:10.5,color:C.text}}>{s.softFlag}</div>
+            </div>
+          )}
+          {s.patternAlert && (
+            <div style={{padding:'9px 12px 9px 14px',background:C.purpL,borderLeft:`3px solid ${C.purp}`,borderRadius:'0 4px 4px 0'}}>
+              <div style={{fontSize:10.5,fontWeight:700,color:C.purpD,marginBottom:2}}>Coaching flag escalated to ops lead</div>
+              <div style={{fontSize:10.5,color:C.text}}>Baseline data missing in 4 of 8 submissions from this provider. Pattern threshold crossed. Coaching intervention recommended.</div>
+            </div>
+          )}
+
+          {/* Learning bar */}
+          <div style={{background:C.navy,borderRadius:4,padding:'9px 12px',display:'flex',alignItems:'center',gap:12,marginTop:4}}>
+            <span style={{fontSize:9.5,color:'rgba(255,255,255,0.45)',flex:1,fontFamily:'monospace'}}>{s.learningBar}</span>
+            <span style={{fontSize:10,color:C.teal,fontFamily:'monospace',fontWeight:600,whiteSpace:'nowrap'}}>↻ learning</span>
+          </div>
+
+          {/* Actions */}
+          <div style={{display:'flex',gap:8,marginTop:4}}>
+            {!s.allClear && !s.denialBanner && (
+              feedbackSent
+                ? <button disabled style={{padding:'7px 14px',borderRadius:4,fontSize:11,fontWeight:500,background:C.grayL,color:C.gray,border:`1px solid ${C.border}`,cursor:'default'}}>Feedback sent ✓</button>
+                : <button onClick={onFeedbackSent} style={{padding:'7px 14px',borderRadius:4,fontSize:11,fontWeight:500,background:C.teal,color:C.white,border:'none',cursor:'pointer'}}>
+                    {s.hardBlock ? 'Send feedback to BCBA' : 'Send pattern alert to ops lead'}
+                  </button>
+            )}
+            {s.allClear && (
+              <button style={{padding:'7px 14px',borderRadius:4,fontSize:11,fontWeight:500,background:C.teal,color:C.white,border:'none',cursor:'pointer'}}>Submit to payer</button>
+            )}
+            {!s.allClear && !s.denialBanner && (
+              <button style={{padding:'7px 14px',borderRadius:4,fontSize:11,fontWeight:500,background:'transparent',color:C.text2,border:`1px solid ${C.border}`,cursor:'pointer'}}>Override and submit</button>
+            )}
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── View: Feedback Log ─────────────────────────────────────────────────────
+const FeedbackView = ({scenario, feedbackSent}) => {
+  const events = feedbackSent
+    ? [{id:0,dot:C.teal,label:'System · auto',time:'just now',title:'Feedback report sent',body:`Feedback report sent to ${scenario.provider}. Hard block: add PDDBI. Soft flags: strengthen hours narrative, name generalization settings.`}, ...scenario.feedbackLog]
+    : scenario.feedbackLog;
+  return (
+    <div className="fade-in">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Feedback log — {scenario.caseId}</span>
+        <Badge label={`${events.length} events`} fill={C.grayL} color={C.gray} border={C.border}/>
+      </div>
+      <Card>
+        <div style={{padding:'4px 14px'}}>
+          {events.map((ev,i) => (
+            <div key={ev.id} style={{display:'flex',gap:14,padding:'12px 0',borderBottom:i<events.length-1?`1px solid ${C.border}`:'none'}}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',width:28,flexShrink:0}}>
+                <div style={{width:10,height:10,borderRadius:'50%',background:ev.dot,flexShrink:0,marginTop:3}}/>
+                {i<events.length-1 && <div style={{flex:1,width:1,background:C.border,margin:'4px 0'}}/>}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:3}}>
+                  <span style={{fontSize:12,fontWeight:500,color:C.text}}>{ev.title}</span>
+                  <span style={{fontFamily:'monospace',fontSize:10,color:C.text2}}>{ev.time}</span>
+                </div>
+                <div style={{fontSize:11,color:C.text2,marginBottom:5,lineHeight:1.5}}>{ev.body}</div>
+                <OwnerBadge label={ev.label}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── View: Payer Rules ──────────────────────────────────────────────────────
+const PayerView = ({scenario}) => {
+  const {payerRules} = scenario;
+  const catStyle = {
+    'REQUIRED':{fill:C.indigoL,color:C.indigoD,border:C.indigo},
+    'FLAG':{fill:C.amberL,color:C.amberD,border:C.amber},
+    'EXCLUDED':{fill:C.coralL,color:C.coralD,border:C.coral},
+  };
+  return (
+    <div className="fade-in">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Payer rules — {payerRules.payer}</span>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <span style={{fontFamily:'monospace',fontSize:10,color:C.text2}}>Updated: {payerRules.updated}</span>
+          <button style={{padding:'4px 10px',borderRadius:4,fontSize:10,fontWeight:500,background:'transparent',color:C.text2,border:`1px solid ${C.border}`,cursor:'pointer'}}>Update rules</button>
+        </div>
+      </div>
+      <Card>
+        <div style={{padding:'8px 14px'}}>
+          {payerRules.rules.map((r,i) => {
+            const cs = catStyle[r.cat];
+            return (
+              <div key={i} style={{display:'flex',alignItems:'flex-start',gap:10,padding:'9px 10px',
+                background:r.triggered ? (r.cat==='REQUIRED'?C.redL:C.amberL) : i%2===0?C.grayL:C.white,
+                borderRadius:4,marginBottom:5,border:r.triggered?`1px solid ${r.cat==='REQUIRED'?C.red:C.amber}`:'1px solid transparent'}}>
+                <Badge label={r.cat} fill={cs.fill} color={cs.color} border={cs.border}/>
+                {r.isNew && <Badge label="New" fill={C.purpL} color={C.purp} border={C.purp}/>}
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,fontWeight:500,color:r.triggered?C.text:C.text,marginBottom:2}}>{r.label}</div>
+                  <div style={{fontSize:10,color:C.text2}}>{r.note}</div>
+                </div>
+                {r.triggered && <span style={{fontSize:9,color:r.cat==='EXCLUDED'?C.coral:C.amber,fontWeight:700,whiteSpace:'nowrap'}}>triggered ↑</span>}
+                {r.ok && <span style={{fontSize:9,color:C.green,fontWeight:700}}>✓ passed</span>}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── View: Denial Patterns ──────────────────────────────────────────────────
+const PatternsView = ({scenario}) => {
+  const {denialStats:ds, denialBars, providers} = scenario;
+  return (
+    <div className="fade-in" style={{display:'flex',flexDirection:'column',gap:14}}>
+      <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Denial patterns</span>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}}>
+        {[['Cases',ds.cases,C.navy,C.white],[`First-pass`,ds.approvals,C.teal,C.white],
+          ['Info requests',ds.adrs,C.amber,C.white],['Denials',ds.denials,C.coral,C.white]
+        ].map(([l,v,bg,tc]) => (
+          <div key={l} style={{background:bg,borderRadius:6,padding:'14px',textAlign:'center'}}>
+            <div style={{fontFamily:'monospace',fontSize:28,fontWeight:600,color:tc,marginBottom:3}}>{v}</div>
+            <div style={{fontSize:10,color:tc,opacity:0.7,textTransform:'uppercase',letterSpacing:'0.05em'}}>{l}</div>
+          </div>
+        ))}
+      </div>
+      <Card>
+        <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>Top denial triggers</span></CardHeader>
+        <div style={{padding:'12px 14px',display:'flex',flexDirection:'column',gap:8}}>
+          {denialBars.map((b,i) => (
+            <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:b.highlighted?'6px 8px':'4px 0',
+              background:b.highlighted?b.catBg:'transparent',borderRadius:b.highlighted?4:0}}>
+              <Badge label={b.cat} fill={b.catBg} color={b.catColor} border={b.catColor}/>
+              <span style={{flex:1,fontSize:11,color:C.text}}>{b.label}{b.note&&<span style={{fontSize:10,color:C.text2,marginLeft:6}}>· {b.note}</span>}</span>
+              <div style={{width:140,height:6,background:C.border,borderRadius:20,overflow:'hidden'}}>
+                <div style={{width:`${b.pct}%`,height:'100%',background:b.catColor,borderRadius:20}}/>
+              </div>
+              <span style={{fontFamily:'monospace',fontSize:11,color:C.text2,width:34,textAlign:'right'}}>{b.pct}%</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card>
+        <CardHeader>
+          <span style={{fontSize:12,fontWeight:600,color:C.text}}>Provider highlight — {scenario.provider.split(',')[0]}</span>
+        </CardHeader>
+        <div style={{padding:'12px 14px',display:'flex',gap:20,alignItems:'center'}}>
+          <div>
+            <div style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',color:C.text2,marginBottom:3}}>First-pass rate</div>
+            <div style={{fontFamily:'monospace',fontSize:24,fontWeight:600,color:C.teal}}>{scenario.providers.find(p=>p.highlight)?.rate||'—'}</div>
+            <div style={{fontSize:10,color:C.text2}}>vs {scenario.providers.find(p=>!p.highlight)?.rate||'81%'} network avg</div>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em',color:C.text2,marginBottom:3}}>Most common flag</div>
+            <div style={{fontSize:12,color:C.text}}>{scenario.providers.find(p=>p.highlight)?.flag||'—'}</div>
+          </div>
+          <button style={{padding:'6px 12px',borderRadius:4,fontSize:11,background:'transparent',color:C.teal,border:`1px solid ${C.teal}`,cursor:'pointer'}}>View full profile</button>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+// ── View: Provider Reports ─────────────────────────────────────────────────
+const ReportsView = ({scenario}) => (
+  <div className="fade-in">
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+      <span style={{fontSize:10,fontWeight:700,letterSpacing:'0.07em',textTransform:'uppercase',color:C.text2}}>Provider reports</span>
+      <button style={{padding:'6px 12px',borderRadius:4,fontSize:11,fontWeight:500,background:C.teal,color:C.white,border:'none',cursor:'pointer'}}>Generate report</button>
+    </div>
+    <Card>
+      <div style={{padding:0}}>
+        <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 2fr 1fr',padding:'8px 14px',
+          background:C.navy,borderBottom:`1px solid ${C.border}`}}>
+          {['Provider','Cases','First-pass','Most common flag','Trend'].map(h=>(
+            <span key={h} style={{fontSize:10,fontWeight:700,color:'rgba(255,255,255,0.6)',textTransform:'uppercase',letterSpacing:'0.05em'}}>{h}</span>
+          ))}
+        </div>
+        {scenario.providers.map((p,i)=>(
+          <div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 2fr 1fr',
+            padding:'11px 14px',borderBottom:i<scenario.providers.length-1?`1px solid ${C.border}`:'none',
+            background:p.highlight?C.tealL:i%2===0?C.white:C.grayL,
+            borderLeft:p.highlight?`3px solid ${C.teal}`:p.coaching?`3px solid ${C.amber}`:'3px solid transparent'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:12,fontWeight:500,color:C.text}}>{p.name}</span>
+              {p.coaching && <Badge label="coaching" fill={C.amberL} color={C.amber} border={C.amber}/>}
+            </div>
+            <span style={{fontFamily:'monospace',fontSize:12,color:C.text2}}>{p.cases}</span>
+            <span style={{fontFamily:'monospace',fontSize:12,fontWeight:600,
+              color:parseFloat(p.rate)>=85?C.green:parseFloat(p.rate)>=70?C.amber:C.coral}}>{p.rate}</span>
+            <span style={{fontSize:11,color:C.text2}}>{p.flag}</span>
+            <span style={{fontSize:14,color:p.trend==='↑'?C.green:p.trend==='↓'?C.coral:C.text2}}>{p.trend}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  </div>
+);
+
+// ── Main App ───────────────────────────────────────────────────────────────
+const App = () => {
+  const [activeScenario, setActiveScenario] = useState(1);
+  const [activeView, setActiveView] = useState('assessment');
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  const scenario = SCENARIOS[activeScenario];
+
+  const switchScenario = useCallback((n) => {
+    setActiveScenario(n);
+    setActiveView('assessment');
+    setFeedbackSent(false);
+  }, []);
+
+  const navItems = [
+    {id:'assessment', label:'AI assessment'},
+    {id:'feedback',   label:'Feedback log'},
+    {id:'payer',      label:'Payer rules'},
+    {id:'patterns',   label:'Denial patterns'},
+    {id:'reports',    label:'Provider reports'},
+  ];
+
+  return (
+    <div style={{height:'100vh',display:'flex',flexDirection:'column',fontFamily:"'IBM Plex Sans',system-ui,sans-serif"}}>
+
+      {/* Scenario bar */}
+      <div style={{background:'#0A1628',borderBottom:'1px solid rgba(255,255,255,0.06)',padding:'7px 16px',display:'flex',alignItems:'center',gap:12,flexShrink:0,zIndex:10}}>
+        <span style={{fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.4)',whiteSpace:'nowrap'}}>Alpaca Health — Submission Coordinator</span>
+        <div style={{display:'flex',gap:6,flex:1,justifyContent:'center'}}>
+          {[1,2,3,4,5].map(n=>(
+            <button key={n} onClick={()=>switchScenario(n)} style={{
+              padding:'5px 14px',borderRadius:20,fontSize:10.5,fontWeight:600,cursor:'pointer',transition:'all 0.15s',
+              background:activeScenario===n?C.teal:'transparent',
+              color:activeScenario===n?C.white:'rgba(255,255,255,0.5)',
+              border:activeScenario===n?`1px solid ${C.teal}`:'1px solid rgba(255,255,255,0.12)',
+            }}>
+              {SCENARIOS[n].pill}
+            </button>
+          ))}
+        </div>
+        <span style={{fontFamily:'monospace',fontSize:10,color:'rgba(255,255,255,0.3)',whiteSpace:'nowrap'}}>Test scenario {activeScenario} of 5</span>
+      </div>
+
+      {/* App shell */}
+      <div style={{flex:1,display:'grid',gridTemplateColumns:'190px 1fr',gridTemplateRows:'44px 1fr',minHeight:0}}>
+
+        {/* Top bar */}
+        <div style={{gridColumn:'1/-1',background:C.navy,display:'flex',alignItems:'center',padding:'0 18px',gap:14,borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+          <span style={{fontFamily:'monospace',fontSize:13,color:C.white,fontWeight:600}}>
+            alpaca<span style={{color:C.teal}}>.</span>coord
+          </span>
+          <div style={{width:1,height:18,background:'rgba(255,255,255,0.1)'}}/>
+          <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>Submission coordinator</span>
+          <span style={{marginLeft:'auto',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{scenario.caseId}</span>
+          <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:12}}>
+            <div style={{width:7,height:7,borderRadius:'50%',background:scenario.statusColor}} className={scenario.statusColor===C.amber?'pulse':''}/>
+            <span style={{fontSize:11,color:'rgba(255,255,255,0.5)'}}>{scenario.statusLabel}</span>
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div style={{background:C.navy2,borderRight:'1px solid rgba(255,255,255,0.06)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+          <div style={{flex:1,padding:'14px 0',overflowY:'auto'}}>
+            <div style={{padding:'0 12px',marginBottom:18}}>
+              <div style={{fontSize:9,fontWeight:700,letterSpacing:'0.1em',color:'rgba(255,255,255,0.2)',textTransform:'uppercase',marginBottom:6,padding:'0 2px'}}>Case</div>
+              {navItems.map(({id,label})=>(
+                <button key={id} onClick={()=>setActiveView(id)} style={{
+                  display:'flex',alignItems:'center',gap:8,width:'100%',padding:'7px 8px',
+                  borderRadius:4,fontSize:12,textAlign:'left',cursor:'pointer',border:'none',
+                  background:activeView===id?C.teal:'transparent',
+                  color:activeView===id?C.white:'rgba(255,255,255,0.55)',
+                  marginBottom:2,transition:'all 0.1s'
+                }}>
+                  <div style={{width:5,height:5,borderRadius:'50%',background:'currentColor',opacity:0.6,flexShrink:0}}/>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{padding:'12px',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+            <div style={{background:'rgba(255,255,255,0.04)',borderRadius:5,padding:'10px',textAlign:'center'}}>
+              <div style={{fontFamily:'monospace',fontSize:9,color:'rgba(255,255,255,0.35)',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.06em'}}>Model confidence</div>
+              <div style={{fontFamily:'monospace',fontSize:22,fontWeight:600,color:C.teal,lineHeight:1}}>{scenario.confidence}%</div>
+              <div style={{fontSize:9,color:'rgba(255,255,255,0.3)',marginTop:3}}>{scenario.comparableCases} comparable cases</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Main content */}
+        <div style={{background:C.surface,overflowY:'auto',padding:'20px'}}>
+          {activeView==='assessment' && <AssessmentView scenario={scenario} onFeedbackSent={()=>setFeedbackSent(true)} feedbackSent={feedbackSent}/>}
+          {activeView==='feedback'   && <FeedbackView scenario={scenario} feedbackSent={feedbackSent}/>}
+          {activeView==='payer'      && <PayerView scenario={scenario}/>}
+          {activeView==='patterns'   && <PatternsView scenario={scenario}/>}
+          {activeView==='reports'    && <ReportsView scenario={scenario}/>}
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

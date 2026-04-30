@@ -51,6 +51,7 @@ const SCENARIOS = {
     statusLabel: 'QA gate — hard block', statusColor: C.coral,
     confidence: 87, comparableCases: 312,
     learningBar: '312 TRICARE cases · 41 denials analyzed · Last rule update: Oct 15 2024 · This BCBA: 3 prior TRICARE submissions, pattern flagged',
+    authExpiry: { daysUntil: 11, currentAuthEnd: 'Nov 13, 2024', alert: true },
     layer1: [
       { label: 'Treatment plan present and signed', status: 'ok' },
       { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
@@ -113,6 +114,7 @@ const SCENARIOS = {
     statusLabel: 'All checks passed — ready', statusColor: C.teal,
     confidence: 94, comparableCases: 208,
     learningBar: '208 commercial cases · 12 denials · Last rule update: Sep 3 2024 · This BCBA: 11 prior submissions, 91% first-pass rate',
+    authExpiry: { daysUntil: 44, currentAuthEnd: 'Dec 18, 2024', alert: false },
     layer1: [
       { label: 'Treatment plan present and signed', status: 'ok' },
       { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
@@ -170,6 +172,7 @@ const SCENARIOS = {
     statusLabel: 'Soft flag — coaching alert generated', statusColor: C.amber,
     confidence: 79, comparableCases: 144,
     learningBar: 'This BCBA: 8 submissions, 62% first-pass rate · Recurring flag on baseline data across 4 cases · Coaching flag generated',
+    authExpiry: { daysUntil: 8, currentAuthEnd: 'Nov 14, 2024', alert: true },
     layer1: [
       { label: 'Treatment plan present and signed', status: 'ok' },
       { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
@@ -231,6 +234,7 @@ const SCENARIOS = {
     statusLabel: 'Case closed — final denial', statusColor: C.coral,
     confidence: 71, comparableCases: 89,
     learningBar: 'Denial categorized: Clinical — ABA methodology · Knowledge base updated · Colorado Medicaid ABA methodology rule confidence increased',
+    authExpiry: { daysUntil: 0, currentAuthEnd: 'Nov 01, 2024', alert: false, expired: true },
     layer1: [
       { label: 'Treatment plan present and signed', status: 'ok' },
       { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
@@ -292,6 +296,7 @@ const SCENARIOS = {
     statusLabel: 'New rule triggered — first case', statusColor: C.purp,
     confidence: 82, comparableCases: 312,
     learningBar: 'New rule added Oct 28 2024 — identified from 6 TRICARE denials · This is the first case assessed under the updated rule',
+    authExpiry: { daysUntil: 22, currentAuthEnd: 'Nov 30, 2024', alert: false },
     layer1: [
       { label: 'Treatment plan present and signed', status: 'ok' },
       { label: 'ASD diagnosis by qualifying provider', status: 'ok' },
@@ -446,7 +451,32 @@ const AssessmentView = ({scenario, onFeedbackSent, feedbackSent}) => {
         </div>
       </Card>
 
-      {/* Two layers */}
+      {/* Auth expiry alert */}
+      {s.authExpiry && s.authExpiry.alert && (
+        <div style={{padding:'10px 14px',background:'#FFF3CD',borderLeft:`3px solid ${C.amber}`,borderRadius:'0 4px 4px 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:C.amberD,marginBottom:2}}>
+              ⚠ Current auth expires in {s.authExpiry.daysUntil} days — {s.authExpiry.currentAuthEnd}
+            </div>
+            <div style={{fontSize:11,color:C.amber}}>
+              Pending decision window overlaps auth expiry. Continuity of care request flagged to payer. BCBA notified of potential service gap.
+            </div>
+          </div>
+          <Badge label="CoC request sent" fill={C.amberL} color={C.amber} border={C.amber}/>
+        </div>
+      )}
+      {s.authExpiry && s.authExpiry.expired && (
+        <div style={{padding:'10px 14px',background:C.grayL,borderLeft:`3px solid ${C.gray}`,borderRadius:'0 4px 4px 0'}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.grayD,marginBottom:2}}>Prior auth expired Nov 01, 2024 — case now closed</div>
+          <div style={{fontSize:11,color:C.gray}}>Services lapsed during appeal window. Logged in case record.</div>
+        </div>
+      )}
+      {s.authExpiry && !s.authExpiry.alert && !s.authExpiry.expired && (
+        <div style={{padding:'8px 14px',background:C.greenL,borderLeft:`3px solid ${C.green}`,borderRadius:'0 4px 4px 0',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <span style={{fontSize:11,color:C.greenD}}>Current auth valid until {s.authExpiry.currentAuthEnd} — {s.authExpiry.daysUntil} days remaining. No continuity risk.</span>
+          <Badge label="Auth window clear" fill={C.greenL} color={C.green} border={C.green}/>
+        </div>
+      )}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         {[{title:'Layer 1 — components', items:s.layer1, count:s.layer1.filter(x=>x.status!=='ok').length},
           {title:'Layer 2 — contents', items:s.layer2, count:s.layer2.filter(x=>x.status!=='ok').length}
@@ -1046,13 +1076,123 @@ const PayerIntelReport = ({scenario}) => {
   );
 };
 
-// ── View: Reports hub ──────────────────────────────────────────────────────
+// ── Report: Measurement Framework ─────────────────────────────────────────
+const MeasurementReport = () => {
+  const horizons = [
+    {
+      period: '90 days', color: C.teal, bg: C.tealL,
+      question: 'Is the process working?',
+      metrics: [
+        { kpi: 'First-pass approval rate', baseline: 'Measure before launch', target: 'Directional improvement vs. baseline', why: 'The primary signal. If hard blocks are catching known failure modes, this moves first.' },
+        { kpi: 'Hard block catch rate', baseline: '0% (no tool)', target: '>80% of known denial triggers caught pre-submission', why: 'Validates that Layer 1 and Layer 2 are functioning as designed, not as a checklist.' },
+        { kpi: 'Time from BCBA draft to coordinator send', baseline: 'Manual review time', target: 'Reduction as AI pre-analysis removes search time', why: 'Coordinator efficiency signal. If the tool is accelerating, this shrinks.' },
+      ],
+      diagnostic: 'Pull the denial log. If clinical and payer-rule failures are declining faster than admin failures, the tool is functioning as a learning system. If admin failures decline fastest, it\'s functioning as a checklist.'
+    },
+    {
+      period: '6 months', color: C.purp, bg: C.purpL,
+      question: 'Is the learning compounding?',
+      metrics: [
+        { kpi: 'Denial rate per payer — trend', baseline: 'Month 1 denial rate by payer', target: 'Declining trend, especially for payers with active rule sets', why: 'If payer-level learning is working, denial rates per payer should diverge — known payers improve, new payers start at baseline.' },
+        { kpi: 'BCBA first-pass rate improvement post-coaching flag', baseline: 'Rate before coaching intervention', target: '10–15pt improvement within 5 submissions after flag', why: 'Validates the coaching loop. If flagged BCBAs don\'t improve, the feedback report needs redesigning.' },
+        { kpi: 'Coordinator override rate', baseline: 'Month 1 override frequency', target: 'Declining as AI confidence compounds', why: 'A declining override rate means the AI is learning what the coordinator knows. A flat or rising rate means the model needs recalibration.' },
+      ],
+      diagnostic: 'Check the delta between coordinator judgment and AI output per flag type. Overrides clustering on the same flag type signal either a false positive rule or a coordinator knowledge gap — two different interventions.'
+    },
+    {
+      period: '12 months', color: C.indigo, bg: C.indigoL,
+      question: 'Is this building a moat?',
+      metrics: [
+        { kpi: 'Cost per successful authorization', baseline: 'Pre-tool cost (coordinator time + denial rework)', target: 'Measurable reduction as first-pass rate rises', why: 'The business case in one number. Every prevented denial is a rework cycle that didn\'t happen.' },
+        { kpi: 'Revenue cycle velocity — draft to approval', baseline: 'Average days from BCBA draft to auth approval', target: 'Shrinking, driven by fewer revision cycles', why: 'Faster authorizations mean faster care starts and faster revenue recognition.' },
+        { kpi: 'Payer intelligence — proactive vs. reactive rule updates', baseline: '0% proactive at launch', target: '>50% of rule updates caught before a denial at 12 months', why: 'This is the moat metric. If the tool is detecting payer behavior shifts before they cause denials, it\'s generating knowledge that doesn\'t exist anywhere else.' },
+      ],
+      diagnostic: 'The 12-month diagnostic: what share of rule updates were proactive (caught from pattern analysis before a denial) vs. reactive (caught after a denial)? A rising proactive share means the Discover capability is compounding. That ratio is the clearest evidence the tool is a learning system, not a checklist.'
+    }
+  ];
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      {/* Header */}
+      <div style={{background:C.navy,borderRadius:6,padding:'16px 20px'}}>
+        <div style={{fontSize:9,fontWeight:700,color:'rgba(255,255,255,0.4)',letterSpacing:'0.08em',textTransform:'uppercase',marginBottom:4}}>Measurement framework</div>
+        <div style={{fontSize:18,fontWeight:600,color:C.white,marginBottom:4}}>How do we know it's working?</div>
+        <div style={{fontSize:11,color:'rgba(255,255,255,0.5)',lineHeight:1.6}}>
+          Three time horizons. Three questions. The distinction that matters: if clinical and payer-rule denial rates decline faster than admin failures, the tool is learning. If admin failures decline fastest, it's a checklist.
+        </div>
+      </div>
+
+      {horizons.map((h,hi) => (
+        <Card key={hi}>
+          <div style={{padding:'12px 16px',background:h.bg,borderBottom:`1px solid ${h.color}30`,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div style={{background:h.color,borderRadius:4,padding:'4px 10px'}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.white,fontFamily:'monospace'}}>{h.period}</span>
+              </div>
+              <span style={{fontSize:13,fontWeight:600,color:h.color}}>{h.question}</span>
+            </div>
+          </div>
+          <div style={{padding:'0 0 12px'}}>
+            {/* Metrics table */}
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1.5fr 1.5fr',borderBottom:`1px solid ${C.border}`,padding:'8px 16px',background:'#FAFAF8'}}>
+              {['KPI','Baseline','Target'].map(l=><span key={l} style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em',color:C.text2}}>{l}</span>)}
+            </div>
+            {h.metrics.map((m,i)=>(
+              <div key={i} style={{display:'grid',gridTemplateColumns:'2fr 1.5fr 1.5fr',padding:'10px 16px',
+                borderBottom:i<h.metrics.length-1?`1px solid ${C.border}`:'none',
+                background:i%2===0?C.white:'#FAFAF8',alignItems:'start',gap:8}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:600,color:C.text,marginBottom:3}}>{m.kpi}</div>
+                  <div style={{fontSize:10,color:C.text2,lineHeight:1.5}}>{m.why}</div>
+                </div>
+                <div style={{fontSize:11,color:C.text2,paddingTop:2}}>{m.baseline}</div>
+                <div style={{fontSize:11,color:h.color,fontWeight:500,paddingTop:2}}>{m.target}</div>
+              </div>
+            ))}
+            {/* Diagnostic */}
+            <div style={{margin:'10px 16px 0',padding:'10px 14px 10px 16px',
+              background:h.bg,borderLeft:`3px solid ${h.color}`,borderRadius:'0 4px 4px 0'}}>
+              <div style={{fontSize:9,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.07em',color:h.color,marginBottom:4}}>Diagnostic check</div>
+              <div style={{fontSize:11,color:C.text,lineHeight:1.6}}>{h.diagnostic}</div>
+            </div>
+          </div>
+        </Card>
+      ))}
+
+      {/* The one number */}
+      <Card>
+        <CardHeader><span style={{fontSize:12,fontWeight:600,color:C.text}}>The one number to watch</span></CardHeader>
+        <div style={{padding:'14px 16px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <div style={{background:C.tealL,borderRadius:6,padding:'16px',textAlign:'center'}}>
+            <div style={{fontFamily:'monospace',fontSize:32,fontWeight:700,color:C.teal,lineHeight:1,marginBottom:6}}>FPR</div>
+            <div style={{fontSize:12,fontWeight:600,color:C.tealD,marginBottom:4}}>First-pass approval rate</div>
+            <div style={{fontSize:11,color:C.tealD,lineHeight:1.5}}>If this goes up, the process is working. Everything else explains why.</div>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {[
+              {label:'FPR improves + clinical denials down', verdict:'Learning system working as designed', color:C.green},
+              {label:'FPR improves + admin denials down only', verdict:'Functioning as checklist — learning loop needs review', color:C.amber},
+              {label:'FPR flat + coordinator overrides high', verdict:'AI confidence miscalibrated — rules need update', color:C.amber},
+              {label:'FPR declines', verdict:'Process gap — escalate to full diagnostic', color:C.coral},
+            ].map((r,i)=>(
+              <div key={i} style={{padding:'8px 10px',background:C.grayL,borderRadius:4,borderLeft:`3px solid ${r.color}`}}>
+                <div style={{fontSize:10,color:C.text2,marginBottom:2}}>{r.label}</div>
+                <div style={{fontSize:10,fontWeight:600,color:r.color}}>{r.verdict}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
 const ReportsView = ({scenario}) => {
   const [activeReport, setActiveReport] = useState('monthly');
   const tabs = [
     {id:'monthly',  label:'Monthly operations'},
     {id:'bcba',     label:'BCBA performance'},
     {id:'payer',    label:'Payer intelligence'},
+    {id:'measure',  label:'How are we measuring?'},
   ];
   return (
     <div className="fade-in" style={{display:'flex',flexDirection:'column',gap:0}}>
@@ -1071,9 +1211,10 @@ const ReportsView = ({scenario}) => {
           }}>{label}</button>
         ))}
       </div>
-      {activeReport==='monthly' && <MonthlyOpsReport scenario={scenario}/>}
-      {activeReport==='bcba'    && <BCBAReport scenario={scenario}/>}
-      {activeReport==='payer'   && <PayerIntelReport scenario={scenario}/>}
+      {activeReport==='monthly'  && <MonthlyOpsReport scenario={scenario}/>}
+      {activeReport==='bcba'     && <BCBAReport scenario={scenario}/>}
+      {activeReport==='payer'    && <PayerIntelReport scenario={scenario}/>}
+      {activeReport==='measure'  && <MeasurementReport/>}
     </div>
   );
 };
@@ -1086,9 +1227,9 @@ const IntroPage = ({onEnter}) => {
     {
       id:'assessment', icon:'⬡', color:C.indigo, bg:C.indigoL,
       title:'AI assessment',
-      what:'Runs two checks on every incoming draft before the coordinator reviews it.',
-      how:'Layer 1 catches missing documents. Layer 2 checks whether the documents that exist actually meet payer standards. Hard blocks stop submission. Soft flags surface to the coordinator with context.',
-      look:'Red block means nothing moves until it\'s resolved. Amber flag means the coordinator reviews and decides. Green means all clear.',
+      what:'Runs two checks on every incoming draft before the coordinator reviews it. Also flags when the current auth is approaching expiry.',
+      how:'Layer 1 catches missing documents. Layer 2 checks whether documents meet payer standards. A third check monitors the current auth window — if expiry overlaps the pending decision window, a continuity of care request fires automatically.',
+      look:'Red block = nothing moves. Amber flag = coordinator reviews. Amber expiry banner = CoC request already sent, BCBA notified. Green auth strip = window clear.',
     },
     {
       id:'feedback', icon:'◎', color:C.teal, bg:C.tealL,
@@ -1101,31 +1242,31 @@ const IntroPage = ({onEnter}) => {
       id:'payer', icon:'◈', color:C.purp, bg:C.purpL,
       title:'Payer rules',
       what:'The live knowledge base the AI checks every submission against.',
-      how:'Rules are tagged as REQUIRED, FLAG, or EXCLUDED. REQUIRED rules are hard stops. FLAG rules reduce approval probability. EXCLUDED rules trigger immediate denial. Rules update automatically when denial patterns cross a threshold.',
-      look:'Triggered rules are highlighted in red or amber — these are the specific rules that fired on the active case.',
+      how:'Rules are tagged as REQUIRED, FLAG, or EXCLUDED. Rules update automatically when denial patterns cross a threshold.',
+      look:'Triggered rules are highlighted in red or amber. New rules carry a purple "New" badge showing when they were auto-generated.',
     },
     {
       id:'patterns', icon:'◲', color:C.amber, bg:C.amberL,
       title:'Denial patterns',
       what:'System-wide view of what\'s failing, how often, and for which payers and providers.',
-      how:'Every denial is categorized as clinical, admin, or payer rule. Bars show frequency. When a pattern crosses a threshold, the tool escalates it to a rules update or a coaching flag.',
+      how:'Every denial is categorized as clinical, admin, or payer rule. When a pattern crosses a threshold, the tool escalates it to a rules update or coaching flag.',
       look:'Highlighted bars are the patterns most relevant to the active scenario. Watch how they shift across scenarios.',
     },
     {
       id:'reports', icon:'◭', color:C.green, bg:C.greenL,
       title:'Reports',
-      what:'Three report types built for three different decisions: ops review, BCBA coaching, and payer risk management.',
-      how:'Monthly operations gives the cycle summary and required actions. BCBA performance shows individual provider trends and recommended interventions. Payer intelligence tracks risk by payer and surfaces rule changes.',
-      look:'Switch scenarios to see how each report responds to different case outcomes — especially S3 (pattern coaching) and S5 (new payer rule).',
+      what:'Four report types: monthly ops, BCBA performance, payer intelligence, and the measurement framework.',
+      how:'Monthly ops gives the cycle summary. BCBA performance shows individual trends and coaching recommendations. Payer intelligence tracks risk by payer. The measurement tab answers: how do we know it\'s working?',
+      look:'The "How are we measuring?" tab has the full framework — three time horizons, nine KPIs, and the one diagnostic that tells you whether this is a learning system or a checklist.',
     },
   ];
 
   const scenarios = [
-    {n:1, label:'Hard block caught', desc:'The QA gate stops a TRICARE submission missing a required PDDBI. Shows the coordinator exactly what to send back and why.'},
-    {n:2, label:'Clean pass', desc:'A commercial submission with no flags. Shows the tool calibrating correctly — not flagging everything, accelerating the clean cases.'},
-    {n:3, label:'Pattern identified', desc:'The fourth baseline data flag from the same BCBA crosses the threshold. Coaching escalation fires automatically.'},
-    {n:4, label:'Denial routed', desc:'A coordinator override leads to a denial. The outcome feeds back into the knowledge base. The tool learns from the gap.'},
-    {n:5, label:'Payer rule update', desc:'A new TRICARE requirement detected from 6 denial patterns. Auto-escalated to the rules database before another submission fails.'},
+    {n:1, label:'Hard block caught', desc:'The QA gate stops a TRICARE submission missing a required PDDBI. Auth expiry alert fires — current auth expires in 11 days, continuity of care request sent automatically.'},
+    {n:2, label:'Clean pass', desc:'A commercial submission with no flags and 44 days of auth buffer. Shows the tool calibrating correctly — not flagging everything, accelerating the clean cases.'},
+    {n:3, label:'Pattern identified', desc:'The fourth baseline data flag from the same BCBA in 8 days crosses the threshold. Auth expires in 8 days — dual urgency. Coaching escalation fires automatically.'},
+    {n:4, label:'Denial routed', desc:'A coordinator override leads to a denial. Auth has expired. The outcome feeds back into the knowledge base. Clean close-out with full case summary.'},
+    {n:5, label:'Payer rule update', desc:'A new TRICARE requirement detected from 6 denial patterns. Auto-escalated before another submission fails. 22 days of auth buffer — no continuity risk.'},
   ];
 
   return (
@@ -1153,17 +1294,23 @@ const IntroPage = ({onEnter}) => {
         <div style={{display:'inline-flex',alignItems:'center',gap:8,background:'rgba(29,158,117,0.12)',
           border:'1px solid rgba(29,158,117,0.25)',borderRadius:20,padding:'5px 14px',marginBottom:24}}>
           <div style={{width:6,height:6,borderRadius:'50%',background:C.teal}}/>
-          <span style={{fontSize:11,color:C.teal,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase'}}>Submission coordinator · Chief of staff</span>
+          <span style={{fontSize:11,color:C.teal,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase'}}>Submission coordinator · Chief of staff · Concept prototype</span>
         </div>
         <h1 style={{fontSize:42,fontWeight:700,color:C.white,lineHeight:1.15,marginBottom:20,letterSpacing:'-0.02em'}}>
           The coordinator makes<br/>every decision.<br/>
           <span style={{color:C.teal}}>This tool makes them better.</span>
         </h1>
-        <p style={{fontSize:15,color:'rgba(255,255,255,0.55)',lineHeight:1.7,maxWidth:680,marginBottom:36}}>
+        <p style={{fontSize:15,color:'rgba(255,255,255,0.55)',lineHeight:1.7,maxWidth:680,marginBottom:16}}>
           An AI-powered case intelligence layer for ABA prior authorization. It checks every draft before submission,
           learns from every outcome, and surfaces patterns before they become denial trends — so the coordinator
           spends their time on judgment, not searching for what went wrong.
         </p>
+        <div style={{padding:'12px 16px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:6,marginBottom:32,maxWidth:680}}>
+          <div style={{fontSize:11,fontWeight:700,color:'rgba(255,255,255,0.5)',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:6}}>About this prototype</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',lineHeight:1.7}}>
+            This is a concept mockup built to demonstrate the tool's logic, learning architecture, and reporting outputs across five realistic scenarios. The data is simulated. The scenarios are designed to show meaningfully different tool behaviors — not just different numbers. Nothing here connects to a live system.
+          </div>
+        </div>
         <button onClick={onEnter} style={{
           padding:'13px 32px',borderRadius:6,fontSize:14,fontWeight:600,cursor:'pointer',
           background:C.teal,color:C.white,border:'none',letterSpacing:'0.02em',
@@ -1310,7 +1457,12 @@ const App = () => {
           </span>
           <div style={{width:1,height:18,background:'rgba(255,255,255,0.1)'}}/>
           <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>chief of staff</span>
-          <span style={{marginLeft:'auto',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{scenario.caseId}</span>
+          <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}}>
+            <div style={{padding:'3px 10px',background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:3}}>
+              <span style={{fontSize:10,fontFamily:'monospace',color:'rgba(255,255,255,0.35)',letterSpacing:'0.04em'}}>concept prototype · data is simulated</span>
+            </div>
+            <span style={{fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.25)'}}>{scenario.caseId}</span>
+          </div>
           <div style={{display:'flex',alignItems:'center',gap:6,marginLeft:12}}>
             <div style={{width:7,height:7,borderRadius:'50%',background:scenario.statusColor}} className={scenario.statusColor===C.amber?'pulse':''}/>
             <span style={{fontSize:11,color:'rgba(255,255,255,0.5)'}}>{scenario.statusLabel}</span>
